@@ -12,9 +12,20 @@ export XZ_SOURCE_DIR="${XZ_SOURCE_DIR:-$ROOT_DIR/codon/build/_deps/xz-src}"
 
 echo "==> Building Codon + Sequre prerequisites (libs only)"
 if [ "$(uname -s)" = "Darwin" ]; then
-  export LLVM_PREFIX="${LLVM_PREFIX:-/opt/homebrew/opt/llvm}"
+  if [ -z "${LLVM_PREFIX:-}" ]; then
+    LLVM_PREFIX="$(brew --prefix llvm 2>/dev/null || true)"
+    if [ -z "$LLVM_PREFIX" ]; then
+      LLVM_PREFIX="/usr/local/opt/llvm"
+    fi
+  fi
+  if [ ! -x "$LLVM_PREFIX/bin/clang" ]; then
+    # Fallback to Xcode toolchain if Homebrew LLVM is unavailable.
+    LLVM_PREFIX="$(xcrun --show-sdk-path 2>/dev/null || echo /usr)"
+  fi
+  export LLVM_PREFIX
   export CC="${CC:-$LLVM_PREFIX/bin/clang}"
   export CXX="${CXX:-$LLVM_PREFIX/bin/clang++}"
+  export PATH="$LLVM_PREFIX/bin:$PATH"
   SKIP_JUPYTER_KERNEL=1 "$ROOT_DIR/compile_codon.sh" --no-openmp
   SYQURE_SKIP_XZ=1 "$ROOT_DIR/compile_sequre.sh" --no-seq
 else

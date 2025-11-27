@@ -11,6 +11,16 @@ CODON_PATH="${CODON_PATH:-$ROOT_DIR/codon/install}"
 export CODON_PATH
 export XZ_SOURCE_DIR="${XZ_SOURCE_DIR:-$ROOT_DIR/codon/build/_deps/xz-src}"
 
+# Choose an LLVM prefix on macOS if not provided.
+if [ -z "${LLVM_PREFIX:-}" ] && [ "$(uname -s)" = "Darwin" ]; then
+  LLVM_PREFIX="$(brew --prefix llvm 2>/dev/null || true)"
+  if [ -z "$LLVM_PREFIX" ]; then
+    LLVM_PREFIX="/usr/local/opt/llvm"
+  fi
+  export LLVM_PREFIX
+  export PATH="$LLVM_PREFIX/bin:$PATH"
+fi
+
 echo "==> Building Codon + Sequre prerequisites"
 if [ -d "$ROOT_DIR/codon/install/lib/codon" ] && [ -d "$ROOT_DIR/codon/install/lib/codon/plugins/sequre" ]; then
   echo "Codon/Sequre already built; skipping rebuild."
