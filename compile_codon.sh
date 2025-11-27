@@ -10,6 +10,7 @@ BUILD_TYPE="${BUILD_TYPE:-Release}"
 CLEAN=0
 CLEAN_ALL=0
 OPENMP_FLAG="${CODON_ENABLE_OPENMP:-ON}"
+SKIP_JUPYTER_KERNEL="${SKIP_JUPYTER_KERNEL:-0}"
 
 for arg in "$@"; do
     case "$arg" in
@@ -147,11 +148,14 @@ OPENSSL_ROOT_DIR="$OPENSSL_ROOT" cmake -S jupyter -B jupyter/build \
 cmake --build jupyter/build --config "${BUILD_TYPE}" -j$(sysctl -n hw.ncpu)
 cmake --install jupyter/build --prefix="$INSTALL_DIR"
 
-# Step 4: Install Jupyter kernel
-echo "=== Installing Jupyter Kernel ==="
-KERNEL_DIR="$HOME/Library/Jupyter/kernels/codon"
-mkdir -p "$KERNEL_DIR"
-cat > "$KERNEL_DIR/kernel.json" << EOF
+# Step 4: Install Jupyter kernel (optional)
+if [ "$SKIP_JUPYTER_KERNEL" = "1" ]; then
+    echo "=== Skipping Jupyter Kernel install (SKIP_JUPYTER_KERNEL=1) ==="
+else
+    echo "=== Installing Jupyter Kernel ==="
+    KERNEL_DIR="$HOME/Library/Jupyter/kernels/codon"
+    mkdir -p "$KERNEL_DIR"
+    if ! cat > "$KERNEL_DIR/kernel.json" << EOF
 {
     "display_name": "Codon",
     "argv": [
@@ -162,11 +166,16 @@ cat > "$KERNEL_DIR/kernel.json" << EOF
     "language": "python"
 }
 EOF
+    then
+        echo "Warning: failed to write Jupyter kernel spec; continuing." >&2
+    else
+        echo "Jupyter kernel installed to: $KERNEL_DIR"
+    fi
+fi
 
 echo ""
 echo "=== Done! ==="
 echo "Codon installed to: $INSTALL_DIR/bin/codon"
-echo "Jupyter kernel installed to: $KERNEL_DIR"
 echo ""
 echo "Add to PATH with:"
 echo "  export PATH=\"$INSTALL_DIR/bin:\$PATH\""

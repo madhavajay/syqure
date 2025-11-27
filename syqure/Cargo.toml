@@ -1,0 +1,21 @@
+[package]
+name = "syqure"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+anyhow = { workspace = true }
+cxx = { workspace = true }
+walkdir = "2.5"
+thiserror = { workspace = true }
+clap = { version = "4.5", features = ["derive", "env"] }
+
+[build-dependencies]
+cxx-build = { workspace = true }

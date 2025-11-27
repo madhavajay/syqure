@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "syqure",
-  "syqure-cli",
 ]
 resolver = "2"
 
@@ -11,6 +10,7 @@ license = "Apache-2.0"
 repository = "https://example.com/syqure"
 keywords = ["codon", "sequre", "ffi", "cxx"]
 categories = ["command-line-utilities", "development-tools"]
+authors = ["Madhava Jay <madhava@openmined.org>"]
 
 [workspace.dependencies]
 anyhow = "1.0"
