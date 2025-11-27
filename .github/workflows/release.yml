@@ -74,6 +74,8 @@ jobs:
         run: |
           export LLVM_PREFIX="$(brew --prefix llvm)"
           export CODON_SYSTEM_LIBRARIES="$(brew --prefix gcc)/lib/gcc/current"
+          export CC="$LLVM_PREFIX/bin/clang"
+          export CXX="$LLVM_PREFIX/bin/clang++"
           ./build_libs.sh
 
       - name: Save bundle to cache (if freshly built)
