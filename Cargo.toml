@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "syqure",
+  "python",
 ]
 resolver = "2"
 

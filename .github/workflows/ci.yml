@@ -1,0 +1,181 @@
+name: Syqure CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust Checks
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os != 'macos-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Show Rust versions
+        run: |
+          rustc --version
+          cargo --version
+          rustfmt --version
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('Cargo.lock') }}-v1
+
+      - name: Check formatting
+        if: matrix.os != 'windows-latest'
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (workspace)
+        if: matrix.os != 'windows-latest'
+        run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --all-features --verbose
+
+      - name: Build Codon/Sequre and syqure
+        shell: bash
+        run: |
+          ./build.sh
+
+      - name: Integration: run example
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
+          echo "$OUT"
+          echo "$OUT" | grep "CP1: my input = 5, sum = 14"
+          echo "$OUT" | grep "CP2: my input = 9, sum = 14"
+
+  python-lint:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+
+      - name: Run lint script
+        run: ./lint.sh
+
+  python-build:
+    name: Python Build
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os != 'macos-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+
+      - name: Build extension and smoke import
+        run: |
+          uv venv
+          uv pip install maturin
+          uv run -- maturin develop --manifest-path bindings/python/Cargo.toml
+          uv run python -c "import syft_crypto_python as syc; mat = syc.generate_identity_material('ci@example.com'); assert mat.fingerprint"
+
+  python-wheel-aarch64:
+    name: Python Wheel aarch64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v2
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: false
+
+      - name: Build aarch64 wheel (smoke)
+        run: |
+          uv venv
+          uv pip install maturin
+          uv run -- maturin build --release --target aarch64-unknown-linux-gnu --manifest-path bindings/python/Cargo.toml --out dist
+          ls -l dist/*.whl

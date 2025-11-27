@@ -50,6 +50,10 @@ fn main() {
     bridge
         .file("src/ffi/bridge.cc")
         .flag_if_supported("-std=c++17")
+        // Silence benign unused-parameter warnings coming from Codon's headers.
+        .flag_if_supported("-Wno-unused-parameter")
+        // Codon headers also trip -Wsign-compare; suppress for cleaner logs.
+        .flag_if_supported("-Wno-sign-compare")
         .compile("syqure-ffi");
 
     // Re-run build script if any of these files change.
@@ -62,5 +66,7 @@ fn main() {
 
 fn repo_root() -> Option<std::path::PathBuf> {
     let manifest = env::var("CARGO_MANIFEST_DIR").ok()?;
-    std::path::Path::new(&manifest).parent().map(|p| p.to_path_buf())
+    std::path::Path::new(&manifest)
+        .parent()
+        .map(|p| p.to_path_buf())
 }

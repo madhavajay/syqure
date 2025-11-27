@@ -63,7 +63,10 @@ impl Syqure {
         clean_sockets()?;
 
         if self.opts.run_after_build {
-            let result = sy_codon_run(&self.make_opts(source, /*standalone=*/false), &self.opts.program_args);
+            let result = sy_codon_run(
+                &self.make_opts(source, /*standalone=*/ false),
+                &self.opts.program_args,
+            );
             if result.status != 0 {
                 return Err(anyhow!("codon run failed: {}", result.error));
             }
@@ -72,7 +75,10 @@ impl Syqure {
 
         // Build only.
         let output = default_output_path(source);
-        let result = sy_codon_build_exe(&self.make_opts(source, /*standalone=*/true), output.to_str().unwrap_or_default());
+        let result = sy_codon_build_exe(
+            &self.make_opts(source, /*standalone=*/ true),
+            output.to_str().unwrap_or_default(),
+        );
         if result.status != 0 {
             return Err(anyhow!("codon build failed: {}", result.error));
         }

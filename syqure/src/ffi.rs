@@ -32,4 +32,6 @@ mod bridge {
     }
 }
 
-pub use bridge::{sy_codon_build_exe, sy_codon_run, sy_codon_version, SyBuildResult, SyCompileOpts};
+pub use bridge::{
+    sy_codon_build_exe, sy_codon_run, sy_codon_version, SyBuildResult, SyCompileOpts,
+};

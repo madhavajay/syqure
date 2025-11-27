@@ -21,3 +21,5 @@ target
 #.idea/
 
 _dump_*
+**/.ipynb_checkpoints/*
+.claude/*
