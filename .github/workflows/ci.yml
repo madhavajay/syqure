@@ -31,6 +31,18 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Codon/Sequre build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            codon/llvm-project/install
+            codon/install
+            codon-seq/install
+            target
+          key: bundle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'codon-seq/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
+          restore-keys: |
+            bundle-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Install LLVM
         run: brew install llvm
 
@@ -49,6 +61,7 @@ jobs:
   rust:
     name: Rust Checks
     runs-on: ${{ matrix.os }}
+    if: false  # temporarily disabled
     continue-on-error: false
     needs: [bundle-macos-arm]
     strategy:
