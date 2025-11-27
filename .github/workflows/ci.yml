@@ -57,7 +57,7 @@ jobs:
   rust:
     name: Rust Checks
     runs-on: ${{ matrix.os }}
-    if: false  # temporarily disabled
+    if: true
     continue-on-error: false
     needs: [bundle-macos-arm]
     strategy:
@@ -119,11 +119,6 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace --all-features --verbose
-
-      - name: Build Codon/Sequre and syqure
-        shell: bash
-        run: |
-          ./build.sh
 
       - name: "Integration: run example"
         shell: bash

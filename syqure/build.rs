@@ -1,8 +1,10 @@
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     set_bundle_env();
+    let bundle_root = bundle_root();
 
     // Build the C++ bridge. We keep it minimal for now and allow downstream
     // overrides for include/library paths via env vars.
@@ -25,6 +27,13 @@ fn main() {
             bridge.include(&llvm_install_inc);
         }
     }
+    // If we only have a prebuilt bundle, use its headers.
+    if let Some(root) = &bundle_root {
+        let bundle_inc = root.join("include");
+        if bundle_inc.exists() {
+            bridge.include(&bundle_inc);
+        }
+    }
     if let Ok(llvm_inc) = env::var("SYQURE_LLVM_INCLUDE") {
         bridge.include(llvm_inc);
     }
@@ -42,6 +51,13 @@ fn main() {
         let default_lib = repo_root.join("codon/install/lib/codon");
         if default_lib.exists() {
             let path = default_lib.display();
+            println!("cargo:rustc-link-search=native={}", path);
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+        }
+    } else if let Some(root) = &bundle_root {
+        let bundle_lib = root.join("lib/codon");
+        if bundle_lib.exists() {
+            let path = bundle_lib.display();
             println!("cargo:rustc-link-search=native={}", path);
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
         }
@@ -130,4 +146,32 @@ fn set_bundle_env() {
     panic!(
         "Missing Codon/Sequre bundle. Set SYQURE_BUNDLE_FILE to a tar.zst bundle for your target."
     );
+}
+
+fn bundle_root() -> Option<PathBuf> {
+    let bundle = env::var("SYQURE_BUNDLE_FILE").ok()?;
+    let out_dir = env::var("OUT_DIR").ok()?;
+    let extract_dir = Path::new(&out_dir).join("bundle");
+
+    if extract_dir.exists() {
+        let _ = std::fs::remove_dir_all(&extract_dir);
+    }
+    std::fs::create_dir_all(&extract_dir).ok()?;
+
+    let status = Command::new("tar")
+        .arg("-xf")
+        .arg(&bundle)
+        .arg("-C")
+        .arg(&extract_dir)
+        .status()
+        .expect("failed to run tar to extract SYQURE_BUNDLE_FILE");
+    if !status.success() {
+        panic!(
+            "failed to extract bundle {} into {}",
+            bundle,
+            extract_dir.display()
+        );
+    }
+
+    Some(extract_dir)
 }

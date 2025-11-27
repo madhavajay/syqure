@@ -53,6 +53,11 @@ if [ -d "$CODON_PATH/lib/codon" ]; then
   rm -rf "$DIST_DIR/lib/codon"
   cp -R "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
 fi
+# Include headers so downstream builds (Rust checks) can compile without rebuilding Codon.
+if [ -d "$CODON_PATH/include" ]; then
+  rm -rf "$DIST_DIR/include"
+  cp -R "$CODON_PATH/include" "$DIST_DIR/include"
+fi
 
 tar -C "$DIST_DIR" -c . | zstd -19 -o "$BUNDLE_OUT"
 
