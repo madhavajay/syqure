@@ -73,7 +73,7 @@ jobs:
         run: |
           ./build.sh
 
-      - name: Integration: run example
+      - name: "Integration: run example"
         shell: bash
         run: |
           set -euo pipefail

@@ -54,10 +54,10 @@ impl Syqure {
             return Err(anyhow!("source file not found: {}", source.display()));
         }
 
-        // Ensure Codon finds its stdlib by exporting CODON_PATH when missing.
+        // Ensure Codon finds its stdlib and plugins by exporting CODON_PATH when missing.
         if std::env::var_os("CODON_PATH").is_none() {
-            let stdlib = self.opts.codon_path.join("lib/codon/stdlib");
-            std::env::set_var("CODON_PATH", stdlib);
+            let codon_lib = self.opts.codon_path.join("lib/codon");
+            std::env::set_var("CODON_PATH", codon_lib);
         }
 
         clean_sockets()?;
