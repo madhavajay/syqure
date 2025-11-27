@@ -14,13 +14,13 @@ echo "==> Building Codon + Sequre prerequisites (libs only)"
 if [ "$(uname -s)" = "Darwin" ]; then
   if [ -z "${LLVM_PREFIX:-}" ]; then
     LLVM_PREFIX="$(brew --prefix llvm 2>/dev/null || true)"
-    if [ -z "$LLVM_PREFIX" ]; then
-      LLVM_PREFIX="/usr/local/opt/llvm"
-    fi
   fi
-  if [ ! -x "$LLVM_PREFIX/bin/clang" ]; then
-    # Fallback to Xcode toolchain if Homebrew LLVM is unavailable.
-    LLVM_PREFIX="$(xcrun --show-sdk-path 2>/dev/null || echo /usr)"
+  if [ -z "$LLVM_PREFIX" ] || [ ! -x "$LLVM_PREFIX/bin/clang" ]; then
+    LLVM_PREFIX="/usr/local/opt/llvm"
+  fi
+  if [ ! -x "$LLVM_PREFIX/bin/clang" ] && command -v xcrun >/dev/null 2>&1; then
+    # Fallback to Xcode clang
+    LLVM_PREFIX="$(xcode-select --print-path)/Toolchains/XcodeDefault.xctoolchain/usr"
   fi
   export LLVM_PREFIX
   export CC="${CC:-$LLVM_PREFIX/bin/clang}"

@@ -74,8 +74,12 @@ jobs:
         run: |
           export LLVM_PREFIX="$(brew --prefix llvm 2>/dev/null || echo /usr/local/opt/llvm)"
           export CODON_SYSTEM_LIBRARIES="$(brew --prefix gcc)/lib/gcc/current"
-          export CC="$LLVM_PREFIX/bin/clang"
-          export CXX="$LLVM_PREFIX/bin/clang++"
+          export CC="${LLVM_PREFIX}/bin/clang"
+          export CXX="${LLVM_PREFIX}/bin/clang++"
+          if [ ! -x "$CC" ]; then
+            CC="$(xcode-select --print-path)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+            CXX="$(xcode-select --print-path)/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang++"
+          fi
           export PATH="$LLVM_PREFIX/bin:$PATH"
           ./build_libs.sh
 
