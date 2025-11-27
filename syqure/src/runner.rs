@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 
+use crate::bundle::ensure_bundle;
 use crate::ffi::{sy_codon_build_exe, sy_codon_run, SyCompileOpts};
 
 /// Options that control how syqure invokes Codon/Sequre.
@@ -56,8 +57,8 @@ impl Syqure {
 
         // Ensure Codon finds its stdlib and plugins by exporting CODON_PATH when missing.
         if std::env::var_os("CODON_PATH").is_none() {
-            let codon_lib = self.opts.codon_path.join("lib/codon");
-            std::env::set_var("CODON_PATH", codon_lib);
+            let stdlib = ensure_bundle()?.join("stdlib");
+            std::env::set_var("CODON_PATH", stdlib);
         }
 
         clean_sockets()?;
@@ -116,9 +117,19 @@ fn default_output_path(source: &Path) -> PathBuf {
 }
 
 fn default_codon_path() -> PathBuf {
-    std::env::var_os("CODON_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("codon/install"))
+    if let Some(env_path) = std::env::var_os("CODON_PATH") {
+        return PathBuf::from(env_path);
+    }
+    // Try to locate a bundled codon lib next to the executable (set by package step).
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let bundled = dir.join("lib/codon");
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+    }
+    PathBuf::from("codon/install")
 }
 
 fn clean_sockets() -> Result<()> {

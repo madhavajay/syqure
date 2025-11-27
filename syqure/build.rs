@@ -1,5 +1,9 @@
 use std::env;
+use std::path::Path;
+
 fn main() {
+    set_bundle_env();
+
     // Build the C++ bridge. We keep it minimal for now and allow downstream
     // overrides for include/library paths via env vars.
     let mut bridge = cxx_build::bridge("src/ffi.rs");
@@ -54,6 +58,17 @@ fn main() {
         .flag_if_supported("-Wno-unused-parameter")
         // Codon headers also trip -Wsign-compare; suppress for cleaner logs.
         .flag_if_supported("-Wno-sign-compare")
+        // Make rpaths relative so we can bundle Codon libs next to the binary.
+        .flag_if_supported(if cfg!(target_os = "macos") {
+            "-Wl,-rpath,@loader_path"
+        } else {
+            "-Wl,-rpath,$ORIGIN"
+        })
+        .flag_if_supported(if cfg!(target_os = "macos") {
+            "-Wl,-rpath,@loader_path/lib/codon"
+        } else {
+            "-Wl,-rpath,$ORIGIN/lib/codon"
+        })
         .compile("syqure-ffi");
 
     // Re-run build script if any of these files change.
@@ -62,6 +77,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ffi/bridge.h");
     println!("cargo:rerun-if-env-changed=SYQURE_CPP_INCLUDE");
     println!("cargo:rerun-if-env-changed=SYQURE_CPP_LIB_DIRS");
+    println!("cargo:rerun-if-env-changed=SYQURE_BUNDLE_FILE");
 }
 
 fn repo_root() -> Option<std::path::PathBuf> {
@@ -69,4 +85,48 @@ fn repo_root() -> Option<std::path::PathBuf> {
     std::path::Path::new(&manifest)
         .parent()
         .map(|p| p.to_path_buf())
+}
+
+fn set_bundle_env() {
+    if let Some(val) = env::var_os("SYQURE_BUNDLE_FILE") {
+        println!(
+            "cargo:rustc-env=SYQURE_BUNDLE_FILE={}",
+            val.to_string_lossy()
+        );
+        return;
+    }
+    if let Some(root) = repo_root() {
+        if let Ok(triple) = env::var("TARGET") {
+            let candidate = root
+                .join("syqure/bundles")
+                .join(format!("{}.tar.zst", triple));
+            if candidate.exists() {
+                println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", candidate.display());
+                return;
+            }
+            // Fallback: if we have a local codon install, package it into OUT_DIR.
+            let codon_lib = root.join("codon/install/lib/codon");
+            if codon_lib.exists() {
+                let out = Path::new(&env::var("OUT_DIR").unwrap())
+                    .join(format!("bundle-{}.tar.zst", triple));
+                let _ = std::fs::remove_file(&out);
+                let status = std::process::Command::new("tar")
+                    .arg("-C")
+                    .arg(&codon_lib)
+                    .arg("-c")
+                    .arg(".")
+                    .stdout(std::fs::File::create(&out).unwrap())
+                    .status()
+                    .unwrap();
+                if status.success() {
+                    println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", out.display());
+                    return;
+                }
+            }
+        }
+    }
+    // Panic early so cargo install surfaces the missing bundle.
+    panic!(
+        "Missing Codon/Sequre bundle. Set SYQURE_BUNDLE_FILE to a tar.zst bundle for your target."
+    );
 }

@@ -38,6 +38,27 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  bundle-macos-arm:
+    name: Build Bundles (macOS arm64)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Codon/Sequre + bundle
+        shell: bash
+        run: |
+          ./build_libs.sh
+
+      - name: Upload macOS arm64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: syqure-bundle-aarch64-apple-darwin
+          path: syqure/bundles/aarch64-apple-darwin.tar.zst
   test:
     name: Run tests
     if: ${{ !inputs.skip_tests && !inputs.bump_only }}

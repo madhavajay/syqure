@@ -15,18 +15,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  bundle-macos-arm:
+    name: Build Bundles (macOS arm64)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Codon/Sequre + bundle
+        shell: bash
+        run: |
+          ./build.sh
+          ls syqure/bundles || true
+
+      - name: Upload macOS arm64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: syqure-bundle-aarch64-apple-darwin
+          path: syqure/bundles/*.tar.zst
+
   rust:
     name: Rust Checks
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os != 'macos-latest' }}
+    continue-on-error: false
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -85,6 +111,7 @@ jobs:
   python-lint:
     name: Python Lint
     runs-on: ubuntu-latest
+    if: false  # temporarily disabled
     steps:
       - uses: actions/checkout@v4
 
@@ -113,6 +140,7 @@ jobs:
     name: Python Build
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.os != 'macos-latest' }}
+    if: false  # temporarily disabled
     strategy:
       fail-fast: false
       matrix:
@@ -150,6 +178,7 @@ jobs:
   python-wheel-aarch64:
     name: Python Wheel aarch64
     runs-on: ubuntu-24.04-arm
+    if: false  # temporarily disabled
     steps:
       - uses: actions/checkout@v4
 

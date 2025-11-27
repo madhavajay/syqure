@@ -1,3 +1,4 @@
+pub mod bundle;
 pub mod ffi;
 pub mod runner;
 
