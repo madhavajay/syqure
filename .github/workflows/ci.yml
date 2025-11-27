@@ -24,6 +24,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup tmate session (debug)
+        uses: mxschmitt/action-tmate@v3
+        if: always()
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
