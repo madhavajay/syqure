@@ -30,3 +30,5 @@ Homepage = "https://github.com/OpenMined/syqure"
 [tool.maturin]
 module-name = "syqure"
 features = []
+# Include the bundled Codon/Sequre libs in the wheel
+include = ["syqure/lib/**/*"]

@@ -9,7 +9,7 @@ use zstd::stream::read::Decoder;
 const BUNDLE_BYTES: &[u8] = include_bytes!(env!("SYQURE_BUNDLE_FILE"));
 
 /// Ensure the bundled Codon/Sequre assets are unpacked locally and return their root path.
-/// Extracts to ~/.cache/syqure/lib/codon (or temp dir fallback).
+/// Extracts to ~/.cache/syqure/<bundle-name>/lib/codon (or temp dir fallback).
 pub fn ensure_bundle() -> Result<PathBuf> {
     let cache_dir =
         default_cache_dir().ok_or_else(|| anyhow!("cannot determine cache directory"))?;
@@ -34,8 +34,17 @@ fn default_cache_dir() -> Option<PathBuf> {
     if let Some(dir) = std::env::var_os("SYQURE_BUNDLE_CACHE") {
         return Some(PathBuf::from(dir));
     }
+    let bundle_name = std::path::Path::new(env!("SYQURE_BUNDLE_FILE"))
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("bundle");
     if let Some(home) = std::env::var_os("HOME") {
-        return Some(PathBuf::from(home).join(".cache").join("syqure"));
+        return Some(
+            PathBuf::from(home)
+                .join(".cache")
+                .join("syqure")
+                .join(bundle_name),
+        );
     }
-    Some(std::env::temp_dir().join("syqure-cache"))
+    Some(std::env::temp_dir().join("syqure-cache").join(bundle_name))
 }

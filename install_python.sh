@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 
 echo "🔨 Building syqure Python package..."
-./build-python.sh
+./build_python.sh
 
 echo ""
 echo "📦 Installing syqure..."

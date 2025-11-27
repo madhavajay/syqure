@@ -58,6 +58,7 @@ fn main() {
         .flag_if_supported("-Wno-unused-parameter")
         // Codon headers also trip -Wsign-compare; suppress for cleaner logs.
         .flag_if_supported("-Wno-sign-compare")
+        .flag_if_supported("-Wno-unused-command-line-argument")
         // Make rpaths relative so we can bundle Codon libs next to the binary.
         .flag_if_supported(if cfg!(target_os = "macos") {
             "-Wl,-rpath,@loader_path"
