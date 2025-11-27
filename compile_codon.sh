@@ -117,7 +117,10 @@ fi
 # Step 2: Build Codon
 echo "=== Building Codon (${BUILD_TYPE}) ==="
 mkdir -p build
-LLVM_PREFIX="/opt/homebrew/opt/llvm"
+# Respect LLVM_PREFIX from environment (set by build.sh), or use default
+if [ -z "${LLVM_PREFIX:-}" ]; then
+    LLVM_PREFIX="/opt/homebrew/opt/llvm"
+fi
 # Use nostdlib++ to avoid mixing system and Homebrew libc++
 cmake -S . -B build \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \

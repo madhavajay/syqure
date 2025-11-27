@@ -31,6 +31,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install LLVM
+        run: brew install llvm
+
       - name: Build Codon/Sequre + bundle
         shell: bash
         run: |
