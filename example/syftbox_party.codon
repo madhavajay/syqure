@@ -1,0 +1,65 @@
+# Standalone party script for SyftBox deployment
+#
+# Run each party separately on different machines:
+#
+#   # Machine 1 (trusted dealer CP0):
+#   SEQURE_CP_COUNT=3 ./sequre.sh example/syftbox_party.codon 0
+#
+#   # Machine 2 (compute party CP1):
+#   SEQURE_CP_COUNT=3 ./sequre.sh example/syftbox_party.codon 1
+#
+#   # Machine 3 (compute party CP2):
+#   SEQURE_CP_COUNT=3 ./sequre.sh example/syftbox_party.codon 2
+#
+# The MESSAGE_DIR should point to a shared folder (synced by SyftBox)
+
+from sequre import sequre, Sharetensor as ST
+from sequre.file_runtime import syftbox_party
+
+
+# Configuration - change this to your SyftBox sync folder
+MESSAGE_DIR = "/tmp/sequre_syftbox_test"
+
+
+# Secure operations
+@sequre
+def secure_tensor_add(mpc, a, b):
+    return a + b
+
+
+@sequre
+def secure_tensor_total_sum(mpc, tensor):
+    row_sums = tensor.sum(axis=0)
+    return row_sums.sum(axis=0)
+
+
+def main():
+    # Initialize file-based MPC environment
+    # Party ID comes from command line: sequre script.codon <pid>
+    mpc = syftbox_party(MESSAGE_DIR, poll_interval_ms=100)
+
+    print(f"CP{mpc.pid}: Starting computation...")
+
+    # Each party's private tensor input
+    cp1_data = [[1, 2, 3], [4, 5, 6]]
+    cp2_data = [[10, 20, 30], [40, 50, 60]]
+    zero_data = [[0, 0, 0], [0, 0, 0]]
+
+    # Secret-share each party's tensor
+    a = ST.enc(mpc, cp1_data if mpc.pid == 1 else zero_data, source_pid=1, modulus=mpc.default_mpc_modulus)
+    b = ST.enc(mpc, cp2_data if mpc.pid == 2 else zero_data, source_pid=2, modulus=mpc.default_mpc_modulus)
+
+    # Secure computation
+    tensor_sum = secure_tensor_add(mpc, a, b)
+    total = secure_tensor_total_sum(mpc, tensor_sum)
+
+    # Reveal results
+    if mpc.pid in (1, 2):
+        print(f"CP{mpc.pid}: Element-wise sum:")
+        print(tensor_sum.reveal(mpc))
+        print(f"CP{mpc.pid}: Total = {total.reveal(mpc)}")
+
+    mpc.done()
+
+
+main()

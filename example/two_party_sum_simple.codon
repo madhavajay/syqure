@@ -1,0 +1,39 @@
+from sequre import sequre, local, Sharetensor as ST
+
+
+# Secure addition over secret shares
+@sequre
+def secure_add(mpc, a, b):
+    return a + b
+
+
+@local
+def demo(mpc):
+    # Each party's private input (dealer CP0 has none)
+    party_inputs = {1: 5, 2: 9}
+    my_val = party_inputs.get(mpc.pid, 0)
+
+    # Secret-share CP1's input: CP1 provides it, others participate with 0
+    a = ST.enc(
+        mpc,
+        my_val if mpc.pid == 1 else 0,
+        source_pid=1,
+        modulus=mpc.default_mpc_modulus,
+    )
+    # Secret-share CP2's input: CP2 provides it, others participate with 0
+    b = ST.enc(
+        mpc,
+        my_val if mpc.pid == 2 else 0,
+        source_pid=2,
+        modulus=mpc.default_mpc_modulus,
+    )
+
+    total = secure_add(mpc, a, b)
+
+    # Reveal to compute parties only
+    if mpc.pid in (1, 2):
+        print(f"CP{mpc.pid}: my input = {my_val}, sum = {total.reveal(mpc)}")
+
+
+# Local simulation (CP0 dealer + CP1/CP2 compute parties)
+demo()

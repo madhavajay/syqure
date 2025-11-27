@@ -1,0 +1,66 @@
+from sequre import sequre, local, Sharetensor as ST
+
+
+# Secure element-wise addition of two tensors
+@sequre
+def secure_tensor_add(mpc, a, b):
+    return a + b
+
+
+# Secure sum reduction along axis (column-wise by default)
+@sequre
+def secure_tensor_sum_axis(mpc, tensor):
+    return tensor.sum(axis=0)
+
+
+# Secure total sum of all elements (flatten then sum, or sum twice)
+@sequre
+def secure_tensor_total_sum(mpc, tensor):
+    row_sums = tensor.sum(axis=0)
+    return row_sums.sum(axis=0)
+
+
+@local
+def demo(mpc):
+    # Each party's private tensor input (dealer CP0 has none)
+    # CP1 has a 2x3 matrix, CP2 has another 2x3 matrix
+    cp1_data = [[1, 2, 3], [4, 5, 6]]
+    cp2_data = [[10, 20, 30], [40, 50, 60]]
+
+    # Create zero tensor for non-owning parties
+    zero_data = [[0, 0, 0], [0, 0, 0]]
+
+    # Secret-share CP1's tensor
+    a = ST.enc(
+        mpc,
+        cp1_data if mpc.pid == 1 else zero_data,
+        source_pid=1,
+        modulus=mpc.default_mpc_modulus,
+    )
+    # Secret-share CP2's tensor
+    b = ST.enc(
+        mpc,
+        cp2_data if mpc.pid == 2 else zero_data,
+        source_pid=2,
+        modulus=mpc.default_mpc_modulus,
+    )
+
+    # Secure element-wise addition of two tensors
+    tensor_sum = secure_tensor_add(mpc, a, b)
+
+    # Secure reduction along axis 0 (column sums)
+    col_sums = secure_tensor_sum_axis(mpc, tensor_sum)
+
+    # Secure total sum of all elements
+    total = secure_tensor_total_sum(mpc, tensor_sum)
+
+    # Reveal results to compute parties only
+    if mpc.pid in (1, 2):
+        print(f"CP{mpc.pid}: Element-wise sum (2x3 tensor):")
+        print(tensor_sum.reveal(mpc))
+        print(f"CP{mpc.pid}: Column sums (axis=0) = {col_sums.reveal(mpc)}")
+        print(f"CP{mpc.pid}: Total sum of all elements = {total.reveal(mpc)}")
+
+
+# Local simulation (CP0 dealer + CP1/CP2 compute parties)
+demo()
