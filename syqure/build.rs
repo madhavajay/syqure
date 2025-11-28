@@ -223,14 +223,26 @@ fn rewrite_install_names(bundle_root: &Path) -> Result<(), String> {
             "/opt/homebrew/opt/llvm/lib/c++/libc++.1.dylib",
             "@loader_path/../llvm/libc++.1.dylib",
         ),
+        (
+            "/opt/homebrew/opt/llvm/lib/libunwind.1.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
+        (
+            "@rpath/libunwind.1.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
     ];
-    let targets = ["libcodonrt.dylib", "libcodonc.dylib"];
-    for tgt in targets {
-        let path = codon_lib.join(tgt);
+    let targets = [
+        codon_lib.join("libcodonrt.dylib"),
+        codon_lib.join("libcodonc.dylib"),
+        llvm_lib.join("libc++.1.0.dylib"),
+        llvm_lib.join("libc++abi.1.0.dylib"),
+    ];
+    for path in targets {
         if !path.exists() {
             continue;
         }
-        for (old, newv) in replacements {
+        for (old, newv) in &replacements {
             let status = Command::new("install_name_tool")
                 .arg("-change")
                 .arg(old)

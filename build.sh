@@ -54,10 +54,20 @@ if [ -d "$CODON_PATH/lib/codon" ]; then
   cp -R "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
 fi
 # Include LLVM runtime libs (libc++/libc++abi) so downstream runs don't need Homebrew LLVM.
-if [ -n "${LLVM_PREFIX:-}" ] && [ -d "$LLVM_PREFIX/lib/c++" ]; then
+if [ -n "${LLVM_PREFIX:-}" ]; then
   rm -rf "$DIST_DIR/lib/llvm"
   mkdir -p "$DIST_DIR/lib/llvm"
-  cp -R "$LLVM_PREFIX/lib/c++/." "$DIST_DIR/lib/llvm/"
+  if [ -d "$LLVM_PREFIX/lib/c++" ]; then
+    cp -R "$LLVM_PREFIX/lib/c++/." "$DIST_DIR/lib/llvm/"
+  fi
+  if ls "$LLVM_PREFIX/lib/libunwind."* >/dev/null 2>&1; then
+    cp "$LLVM_PREFIX"/lib/libunwind.* "$DIST_DIR/lib/llvm/" || true
+  fi
+fi
+# If libunwind still missing, drop in a symlink to the system copy so rpaths resolve at runtime.
+if [ ! -f "$DIST_DIR/lib/llvm/libunwind.1.dylib" ] && [ -f "/usr/lib/libunwind.1.dylib" ]; then
+  ln -s "/usr/lib/libunwind.1.dylib" "$DIST_DIR/lib/llvm/libunwind.1.dylib"
+fi
 fi
 # Include headers so downstream builds (Rust checks) can compile without rebuilding Codon.
 if [ -d "$CODON_PATH/include" ]; then
