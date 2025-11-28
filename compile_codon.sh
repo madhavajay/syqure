@@ -129,7 +129,7 @@ cmake -S . -B build \
     -DCODON_ENABLE_OPENMP="${OPENMP_FLAG}" \
     -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
     -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
-    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib" \
+    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib -Wno-error=character-conversion" \
     -DCMAKE_EXE_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi" \
     -DCMAKE_SHARED_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
 cmake --build build --config "${BUILD_TYPE}" -j$(sysctl -n hw.ncpu)
