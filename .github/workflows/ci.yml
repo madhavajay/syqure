@@ -36,8 +36,6 @@ jobs:
             codon-seq/install
             target
           key: bundle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'codon-seq/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
-          restore-keys: |
-            bundle-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install LLVM
         run: brew install llvm

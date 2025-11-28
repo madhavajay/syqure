@@ -60,8 +60,11 @@ if [ -n "${LLVM_PREFIX:-}" ]; then
   if [ -d "$LLVM_PREFIX/lib/c++" ]; then
     cp -R "$LLVM_PREFIX/lib/c++/." "$DIST_DIR/lib/llvm/"
   fi
+  # Homebrew may place libunwind under lib/ or lib/unwind; copy whichever exists.
   if ls "$LLVM_PREFIX/lib/libunwind."* >/dev/null 2>&1; then
     cp "$LLVM_PREFIX"/lib/libunwind.* "$DIST_DIR/lib/llvm/" || true
+  elif ls "$LLVM_PREFIX/lib/unwind/libunwind."* >/dev/null 2>&1; then
+    cp "$LLVM_PREFIX"/lib/unwind/libunwind.* "$DIST_DIR/lib/llvm/" || true
   fi
 fi
 # If libunwind still missing, drop in a copy/symlink from system locations so rpaths resolve.
