@@ -64,9 +64,18 @@ if [ -n "${LLVM_PREFIX:-}" ]; then
     cp "$LLVM_PREFIX"/lib/libunwind.* "$DIST_DIR/lib/llvm/" || true
   fi
 fi
-# If libunwind still missing, drop in a symlink to the system copy so rpaths resolve at runtime.
-if [ ! -f "$DIST_DIR/lib/llvm/libunwind.1.dylib" ] && [ -f "/usr/lib/libunwind.1.dylib" ]; then
-  ln -s "/usr/lib/libunwind.1.dylib" "$DIST_DIR/lib/llvm/libunwind.1.dylib"
+# If libunwind still missing, drop in a copy/symlink from system locations so rpaths resolve.
+if [ ! -f "$DIST_DIR/lib/llvm/libunwind.1.dylib" ]; then
+  for cand in /usr/lib/libunwind.1.dylib /usr/lib/libunwind.dylib /usr/lib/system/libunwind.dylib; do
+    if [ -f "$cand" ]; then
+      cp "$cand" "$DIST_DIR/lib/llvm/libunwind.1.dylib" || ln -s "$cand" "$DIST_DIR/lib/llvm/libunwind.1.dylib" || true
+      break
+    fi
+  done
+fi
+# Also drop a libunwind.dylib alias if we have a source.
+if [ ! -f "$DIST_DIR/lib/llvm/libunwind.dylib" ] && [ -f "$DIST_DIR/lib/llvm/libunwind.1.dylib" ]; then
+  ln -s "libunwind.1.dylib" "$DIST_DIR/lib/llvm/libunwind.dylib" || true
 fi
 # Include headers so downstream builds (Rust checks) can compile without rebuilding Codon.
 if [ -d "$CODON_PATH/include" ]; then

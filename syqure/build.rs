@@ -231,6 +231,18 @@ fn rewrite_install_names(bundle_root: &Path) -> Result<(), String> {
             "@rpath/libunwind.1.dylib",
             "@loader_path/../llvm/libunwind.1.dylib",
         ),
+        (
+            "/usr/lib/libunwind.1.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
+        (
+            "/usr/lib/libunwind.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
+        (
+            "/usr/lib/system/libunwind.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
     ];
     let targets = [
         codon_lib.join("libcodonrt.dylib"),
