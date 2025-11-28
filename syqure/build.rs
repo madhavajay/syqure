@@ -59,6 +59,13 @@ fn main() {
                 println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
                 linked = true;
             }
+            // Also provide LLVM runtime libs (libc++/libc++abi) from the bundle if present.
+            let bundle_llvm = root.join("lib/llvm");
+            if bundle_llvm.exists() {
+                let path = bundle_llvm.display();
+                println!("cargo:rustc-link-search=native={}", path);
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+            }
         }
         if !linked {
             if let Some(repo_root) = repo_root() {
@@ -193,5 +200,52 @@ fn bundle_root() -> Option<PathBuf> {
         );
     }
 
+    // Normalize dylib install names to use bundled LLVM runtimes.
+    if let Err(e) = rewrite_install_names(&extract_dir) {
+        eprintln!("warning: failed to rewrite install names: {}", e);
+    }
+
     Some(extract_dir)
+}
+
+fn rewrite_install_names(bundle_root: &Path) -> Result<(), String> {
+    let codon_lib = bundle_root.join("lib/codon");
+    let llvm_lib = bundle_root.join("lib/llvm");
+    if !codon_lib.exists() || !llvm_lib.exists() {
+        return Ok(());
+    }
+    let replacements = [
+        (
+            "/opt/homebrew/opt/llvm/lib/c++/libc++abi.1.dylib",
+            "@loader_path/../llvm/libc++abi.1.dylib",
+        ),
+        (
+            "/opt/homebrew/opt/llvm/lib/c++/libc++.1.dylib",
+            "@loader_path/../llvm/libc++.1.dylib",
+        ),
+    ];
+    let targets = ["libcodonrt.dylib", "libcodonc.dylib"];
+    for tgt in targets {
+        let path = codon_lib.join(tgt);
+        if !path.exists() {
+            continue;
+        }
+        for (old, newv) in replacements {
+            let status = Command::new("install_name_tool")
+                .arg("-change")
+                .arg(old)
+                .arg(newv)
+                .arg(&path)
+                .status()
+                .map_err(|e| format!("install_name_tool failed: {}", e))?;
+            if !status.success() {
+                return Err(format!(
+                    "install_name_tool returned {} while patching {}",
+                    status,
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }

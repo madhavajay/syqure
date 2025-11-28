@@ -53,6 +53,12 @@ if [ -d "$CODON_PATH/lib/codon" ]; then
   rm -rf "$DIST_DIR/lib/codon"
   cp -R "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
 fi
+# Include LLVM runtime libs (libc++/libc++abi) so downstream runs don't need Homebrew LLVM.
+if [ -n "${LLVM_PREFIX:-}" ] && [ -d "$LLVM_PREFIX/lib/c++" ]; then
+  rm -rf "$DIST_DIR/lib/llvm"
+  mkdir -p "$DIST_DIR/lib/llvm"
+  cp -R "$LLVM_PREFIX/lib/c++/." "$DIST_DIR/lib/llvm/"
+fi
 # Include headers so downstream builds (Rust checks) can compile without rebuilding Codon.
 if [ -d "$CODON_PATH/include" ]; then
   rm -rf "$DIST_DIR/include"
