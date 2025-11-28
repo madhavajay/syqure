@@ -68,7 +68,6 @@ fi
 if [ ! -f "$DIST_DIR/lib/llvm/libunwind.1.dylib" ] && [ -f "/usr/lib/libunwind.1.dylib" ]; then
   ln -s "/usr/lib/libunwind.1.dylib" "$DIST_DIR/lib/llvm/libunwind.1.dylib"
 fi
-fi
 # Include headers so downstream builds (Rust checks) can compile without rebuilding Codon.
 if [ -d "$CODON_PATH/include" ]; then
   rm -rf "$DIST_DIR/include"
