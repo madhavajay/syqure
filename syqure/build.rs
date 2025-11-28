@@ -167,42 +167,30 @@ fn bundle_root() -> Option<PathBuf> {
     }
     std::fs::create_dir_all(&extract_dir).ok()?;
 
-    // Extract .tar.zst bundle (bsdtar may need explicit zstd).
-    let status = Command::new("tar")
-        .arg("-I")
-        .arg("zstd")
-        .arg("-xf")
+    // Extract .tar.zst bundle using zstd | tar to avoid relying on tar -I support.
+    let mut zstd = Command::new("zstd")
+        .arg("-dc")
         .arg(&bundle)
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn zstd for bundle");
+    let tar_status = Command::new("tar")
+        .arg("-xf")
+        .arg("-")
         .arg("-C")
         .arg(&extract_dir)
+        .stdin(Stdio::from(
+            zstd.stdout.take().expect("missing zstd stdout pipe"),
+        ))
         .status()
-        .unwrap_or_else(|_| Command::new("false").status().unwrap());
-    if !status.success() {
-        // Fallback: zstd -dc bundle | tar -xf -
-        let mut zstd = Command::new("zstd")
-            .arg("-dc")
-            .arg(&bundle)
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("failed to spawn zstd for bundle");
-        let tar_status = Command::new("tar")
-            .arg("-xf")
-            .arg("-")
-            .arg("-C")
-            .arg(&extract_dir)
-            .stdin(Stdio::from(
-                zstd.stdout.take().expect("missing zstd stdout pipe"),
-            ))
-            .status()
-            .expect("failed to run tar to extract bundle");
-        let _ = zstd.wait();
-        if !tar_status.success() {
-            panic!(
-                "failed to extract bundle {} into {}",
-                bundle,
-                extract_dir.display()
-            );
-        }
+        .expect("failed to run tar to extract bundle");
+    let _ = zstd.wait();
+    if !tar_status.success() {
+        panic!(
+            "failed to extract bundle {} into {}",
+            bundle,
+            extract_dir.display()
+        );
     }
 
     Some(extract_dir)

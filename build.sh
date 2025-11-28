@@ -45,7 +45,7 @@ rm -f "$BUNDLE_OUT"
 # Bundle a portable tree with the binary and Codon/Sequre libs
 DIST_DIR="$ROOT_DIR/target/dist/syqure"
 BIN_SRC="$ROOT_DIR/target/debug/syqure"
-mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
+mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib" "$DIST_DIR/include"
 if [ -x "$BIN_SRC" ]; then
   cp "$BIN_SRC" "$DIST_DIR/bin/"
 fi
@@ -56,7 +56,13 @@ fi
 # Include headers so downstream builds (Rust checks) can compile without rebuilding Codon.
 if [ -d "$CODON_PATH/include" ]; then
   rm -rf "$DIST_DIR/include"
-  cp -R "$CODON_PATH/include" "$DIST_DIR/include"
+  mkdir -p "$DIST_DIR/include"
+  cp -R "$CODON_PATH/include/." "$DIST_DIR/include/"
+fi
+# Also ship LLVM headers from the bundled toolchain.
+if [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]; then
+  mkdir -p "$DIST_DIR/include"
+  cp -R "$ROOT_DIR/codon/llvm-project/install/include/." "$DIST_DIR/include/"
 fi
 
 tar -C "$DIST_DIR" -c . | zstd -19 -o "$BUNDLE_OUT"
