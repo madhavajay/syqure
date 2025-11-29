@@ -90,8 +90,28 @@ else
     echo "=== Building LLVM from source (this takes 30-60 min) ==="
     if [ ! -d "llvm-project/.git" ]; then
         rm -rf llvm-project
-        # Use codon-17.0.6 tag (LLVM 17) for Codon 0.17.0 compatibility
-        git clone -b codon-17.0.6 --depth 1 https://github.com/exaloop/llvm-project
+        # Use codon-17.0.6 tag (LLVM 17) for Codon 0.17.0 compatibility.
+        echo "Cloning llvm-project (codon-17.0.6) with retries..."
+        for attempt in 1 2 3; do
+            if git clone -b codon-17.0.6 --depth 1 https://github.com/exaloop/llvm-project; then
+                break
+            fi
+            echo "Clone attempt ${attempt} failed; retrying in 10s" >&2
+            sleep 10
+        done
+        if [ ! -d "llvm-project/.git" ]; then
+            echo "Clone failed; falling back to tarball download..." >&2
+            mkdir -p llvm-project
+            tmp_tar="$(mktemp /tmp/llvm-project.XXXXXX.tar.gz)"
+            if curl -Lf "https://codeload.github.com/exaloop/llvm-project/tar.gz/codon-17.0.6" -o "$tmp_tar"; then
+                tar -xzf "$tmp_tar" --strip-components=1 -C llvm-project
+                rm -f "$tmp_tar"
+            fi
+        fi
+        if [ ! -d "llvm-project/.git" ] && [ ! -d "llvm-project/llvm" ] && [ ! -f "llvm-project/CMakeLists.txt" ]; then
+            echo "Error: failed to obtain exaloop/llvm-project (clone and tarball both failed)" >&2
+            exit 1
+        fi
     fi
     # Don't build OpenMP as part of LLVM - use Homebrew's libomp instead
     # This avoids the clang dependency for OpenMP tests
