@@ -57,8 +57,9 @@ impl Syqure {
 
         // Ensure Codon finds its stdlib and plugins by exporting CODON_PATH when missing.
         if std::env::var_os("CODON_PATH").is_none() {
-            let stdlib = ensure_bundle()?.join("stdlib");
-            std::env::set_var("CODON_PATH", stdlib);
+            // Point CODON_PATH at the bundled Codon root so stdlib/plugins resolve correctly.
+            let codon_root = ensure_bundle()?;
+            std::env::set_var("CODON_PATH", &codon_root);
         }
 
         clean_sockets()?;
