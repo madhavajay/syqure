@@ -52,6 +52,10 @@ fi
 if [ -d "$CODON_PATH/lib/codon" ]; then
   rm -rf "$DIST_DIR/lib/codon"
   cp -R "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
+  # Some Codon builds look for plugins at lib/codon/sequre/...; provide a symlink to plugins/sequre.
+  if [ -d "$DIST_DIR/lib/codon/plugins/sequre" ] && [ ! -e "$DIST_DIR/lib/codon/sequre" ]; then
+    (cd "$DIST_DIR/lib/codon" && ln -s "plugins/sequre" "sequre") || true
+  fi
 fi
 # Include LLVM runtime libs (libc++/libc++abi) so downstream runs don't need Homebrew LLVM.
 if [ -n "${LLVM_PREFIX:-}" ]; then
