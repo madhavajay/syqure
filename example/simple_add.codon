@@ -1,0 +1,21 @@
+from sequre import sequre, local, Sharetensor as ST
+
+@sequre
+def secure_add(mpc, a, b):
+    """Add two secret-shared values"""
+    return a + b
+
+@local
+def demo(mpc, x: int, y: int):
+    # Secret-share the inputs
+    a = ST.enc(mpc, x)
+    b = ST.enc(mpc, y)
+
+    # Compute on encrypted data
+    result = secure_add(mpc, a, b)
+
+    # Reveal result
+    print(f"CP{mpc.pid}: {x} + {y} = {result.reveal(mpc)}")
+
+# Run locally (simulates 2 compute parties + 1 dealer)
+demo(5, 3)

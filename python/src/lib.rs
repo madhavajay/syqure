@@ -1,0 +1,219 @@
+use pyo3::exceptions::PyRuntimeError;
+use pyo3::prelude::*;
+
+use ::syqure as core;
+use core::{CompileOptions, Syqure};
+
+fn map_err(err: impl std::fmt::Display) -> PyErr {
+    PyRuntimeError::new_err(err.to_string())
+}
+
+#[pyclass(name = "CompileOptions", module = "syqure")]
+#[derive(Clone)]
+struct PyCompileOptions {
+    inner: CompileOptions,
+}
+
+#[pymethods]
+impl PyCompileOptions {
+    #[new]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        codon_path=None,
+        plugin=None,
+        disable_opts=None,
+        release=false,
+        run_after_build=true,
+        program_args=None,
+        libs=None,
+        linker_flags=None
+    ))]
+    fn new(
+        codon_path: Option<String>,
+        plugin: Option<String>,
+        disable_opts: Option<Vec<String>>,
+        release: bool,
+        run_after_build: bool,
+        program_args: Option<Vec<String>>,
+        libs: Option<Vec<String>>,
+        linker_flags: Option<String>,
+    ) -> Self {
+        let mut opts = CompileOptions::default();
+
+        if let Some(path) = codon_path {
+            opts.codon_path = path.into();
+        }
+        if let Some(p) = plugin {
+            opts.plugin = p;
+        }
+        if let Some(d) = disable_opts {
+            opts.disable_opts = d;
+        }
+        opts.release = release;
+        opts.run_after_build = run_after_build;
+        if let Some(args) = program_args {
+            opts.program_args = args;
+        }
+        if let Some(l) = libs {
+            opts.libs = l;
+        }
+        if let Some(flags) = linker_flags {
+            opts.linker_flags = flags;
+        }
+
+        Self { inner: opts }
+    }
+
+    #[getter]
+    fn codon_path(&self) -> String {
+        self.inner.codon_path.to_string_lossy().into_owned()
+    }
+
+    #[setter]
+    fn set_codon_path(&mut self, path: String) {
+        self.inner.codon_path = path.into();
+    }
+
+    #[getter]
+    fn plugin(&self) -> String {
+        self.inner.plugin.clone()
+    }
+
+    #[setter]
+    fn set_plugin(&mut self, plugin: String) {
+        self.inner.plugin = plugin;
+    }
+
+    #[getter]
+    fn disable_opts(&self) -> Vec<String> {
+        self.inner.disable_opts.clone()
+    }
+
+    #[setter]
+    fn set_disable_opts(&mut self, opts: Vec<String>) {
+        self.inner.disable_opts = opts;
+    }
+
+    #[getter]
+    fn release(&self) -> bool {
+        self.inner.release
+    }
+
+    #[setter]
+    fn set_release(&mut self, release: bool) {
+        self.inner.release = release;
+    }
+
+    #[getter]
+    fn run_after_build(&self) -> bool {
+        self.inner.run_after_build
+    }
+
+    #[setter]
+    fn set_run_after_build(&mut self, run: bool) {
+        self.inner.run_after_build = run;
+    }
+
+    #[getter]
+    fn program_args(&self) -> Vec<String> {
+        self.inner.program_args.clone()
+    }
+
+    #[setter]
+    fn set_program_args(&mut self, args: Vec<String>) {
+        self.inner.program_args = args;
+    }
+
+    #[getter]
+    fn libs(&self) -> Vec<String> {
+        self.inner.libs.clone()
+    }
+
+    #[setter]
+    fn set_libs(&mut self, libs: Vec<String>) {
+        self.inner.libs = libs;
+    }
+
+    #[getter]
+    fn linker_flags(&self) -> String {
+        self.inner.linker_flags.clone()
+    }
+
+    #[setter]
+    fn set_linker_flags(&mut self, flags: String) {
+        self.inner.linker_flags = flags;
+    }
+}
+
+#[pyclass(name = "Syqure", module = "syqure")]
+struct PySyqure {
+    inner: Syqure,
+}
+
+#[pymethods]
+impl PySyqure {
+    #[new]
+    fn new(opts: PyCompileOptions) -> Self {
+        Self {
+            inner: Syqure::new(opts.inner),
+        }
+    }
+
+    #[staticmethod]
+    fn default() -> Self {
+        Self {
+            inner: Syqure::new(CompileOptions::default()),
+        }
+    }
+
+    fn compile_and_run(&self, source: String) -> PyResult<()> {
+        self.inner
+            .compile_and_maybe_run(&source)
+            .map(|_| ())
+            .map_err(map_err)
+    }
+
+    fn compile(&self, source: String) -> PyResult<Option<String>> {
+        self.inner
+            .compile_and_maybe_run(&source)
+            .map(|opt| opt.map(|p| p.to_string_lossy().into_owned()))
+            .map_err(map_err)
+    }
+}
+
+#[pyfunction]
+fn compile_and_run(source: String, opts: Option<PyCompileOptions>) -> PyResult<()> {
+    let options = opts.map(|o| o.inner).unwrap_or_default();
+    let syqure = Syqure::new(options);
+    syqure
+        .compile_and_maybe_run(&source)
+        .map(|_| ())
+        .map_err(map_err)
+}
+
+#[pyfunction]
+fn compile(source: String, opts: Option<PyCompileOptions>) -> PyResult<Option<String>> {
+    let options = opts.map(|o| o.inner).unwrap_or_default();
+    let syqure = Syqure::new(options);
+    syqure
+        .compile_and_maybe_run(&source)
+        .map(|opt| opt.map(|p| p.to_string_lossy().into_owned()))
+        .map_err(map_err)
+}
+
+#[pymodule]
+fn syqure(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyCompileOptions>()?;
+    m.add_class::<PySyqure>()?;
+
+    m.add_function(wrap_pyfunction!(compile_and_run, m)?)?;
+    m.add_function(wrap_pyfunction!(compile, m)?)?;
+
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    m.add(
+        "__doc__",
+        "Python bindings for the syqure Rust library - Codon/Sequre compiler wrapper using PyO3.",
+    )?;
+
+    Ok(())
+}

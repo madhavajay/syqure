@@ -1,0 +1,20 @@
+[package]
+name = "syqure-py"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "syqure_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0"
+pyo3 = { version = "0.21", features = ["extension-module", "abi3-py38"] }
+syqure = { path = "../syqure" }
+
+[build-dependencies]
+# Empty build-dependencies section to enable build.rs
+
+[package.metadata.maturin]
+name = "syqure"

@@ -1,0 +1,6 @@
+[submodule "codon"]
+	path = codon
+	url = git@github.com:madhavajay/codon.git
+[submodule "sequre"]
+	path = sequre
+	url = git@github.com:madhavajay/sequre.git

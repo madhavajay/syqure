@@ -1,0 +1,15 @@
+from sequre import mpc, sequre, Sharetensor as ST
+
+@sequre
+def secure_add(mpc, a, b):
+    return a + b
+
+# Create MPC instance (connects to other parties)
+mpc = mpc()
+
+# Each party provides their input
+a = ST.enc(mpc, 5)
+b = ST.enc(mpc, 3)
+
+result = secure_add(mpc, a, b)
+print(f"Party {mpc.pid}: 5 + 3 = {result.reveal(mpc)}")
