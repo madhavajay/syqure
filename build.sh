@@ -29,8 +29,7 @@ else
     SKIP_JUPYTER_KERNEL=1 "$ROOT_DIR/compile_codon.sh" --no-openmp
     SYQURE_SKIP_XZ=1 "$ROOT_DIR/compile_sequre.sh" --no-seq
   else
-    "$ROOT_DIR/compile_codon.sh"
-    "$ROOT_DIR/compile_sequre.sh"
+    "$ROOT_DIR/compile_sequre.sh" --no-seq
   fi
 fi
 

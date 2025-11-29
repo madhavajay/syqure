@@ -18,6 +18,7 @@ jobs:
   bundle-macos-arm:
     name: Build Bundles (macOS arm64)
     runs-on: macos-latest
+    if: false  # disabled for Linux branch
     steps:
       - name: Checkout code (with submodules)
         uses: actions/checkout@v4
@@ -58,12 +59,47 @@ jobs:
           name: syqure-bundle-aarch64-apple-darwin
           path: syqure/bundles/*.tar.zst
 
+  bundle-linux-x86:
+    name: Build Bundles (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Codon/Sequre build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            codon-llvm/install
+            codon/install
+            target
+          key: bundle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
+          restore-keys: |
+            bundle-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build Codon/Sequre + bundle (Docker)
+        shell: bash
+        run: |
+          ./build_linux_docker.sh
+          ls syqure/bundles || true
+
+      - name: Upload Linux x86_64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: syqure-bundle-x86_64-unknown-linux-gnu
+          path: syqure/bundles/*.tar.zst
+
   rust:
     name: Rust Checks
     runs-on: ${{ matrix.os }}
     if: false  # temporarily disabled
     continue-on-error: false
-    needs: [bundle-macos-arm]
+    needs: [bundle-linux-x86]
     strategy:
       fail-fast: false
       matrix:
