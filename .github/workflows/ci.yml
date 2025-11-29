@@ -122,6 +122,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "CODON_PATH=${CODON_PATH:-<unset>}"
+          echo "CODON_PLUGIN_PATH=${CODON_PLUGIN_PATH:-<unset>}"
+          echo "CODON_STDLIB=${CODON_STDLIB:-<unset>}"
           OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
           echo "$OUT"
           echo "$OUT" | grep "CP1: my input = 5, sum = 14"
