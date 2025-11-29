@@ -60,6 +60,9 @@ impl Syqure {
             // Point CODON_PATH at the bundled Codon root so stdlib/plugins resolve correctly.
             let codon_root = ensure_bundle()?;
             std::env::set_var("CODON_PATH", &codon_root);
+            if std::env::var_os("CODON_PLUGIN_PATH").is_none() {
+                std::env::set_var("CODON_PLUGIN_PATH", codon_root.join("plugins"));
+            }
         }
 
         clean_sockets()?;
