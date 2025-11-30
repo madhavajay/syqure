@@ -214,49 +214,7 @@ build_codon() {
         git clone https://github.com/exaloop/codon.git "$SEQURE_CODON_PATH"
     fi
     pushd "$SEQURE_CODON_PATH" >/dev/null
-    # Inject an imported OpenMP target so codon links cleanly on Linux without rebuilding libomp.
-    if ! grep -q "Ensure an imported target for the OpenMP runtime exists" CMakeLists.txt; then
-        python3 - <<'PY'
-from pathlib import Path
-cmake = Path("CMakeLists.txt")
-text = cmake.read_text()
-needle = "include(${CMAKE_SOURCE_DIR}/cmake/CMakeRC.cmake)\n\n"
-block = """include(${CMAKE_SOURCE_DIR}/cmake/CMakeRC.cmake)
-
-# Ensure an imported target for the OpenMP runtime exists (Codon links to `omp`)
-if(NOT TARGET omp)
-  get_filename_component(_llvm_lib_dir "${LLVM_DIR}/../../" ABSOLUTE)
-  if(NOT OMP_LIBRARY)
-    unset(OMP_LIBRARY CACHE)
-    # On Linux, search architecture-specific LLVM runtime lib directories
-    if(UNIX AND NOT APPLE)
-      find_library(
-        OMP_LIBRARY
-        NAMES omp libomp
-        PATHS "${_llvm_lib_dir}"
-              "${_llvm_lib_dir}/x86_64-unknown-linux-gnu"
-              "${_llvm_lib_dir}/aarch64-unknown-linux-gnu"
-              "/usr/lib"
-              "/usr/lib/x86_64-linux-gnu"
-              "/usr/lib/aarch64-linux-gnu")
-    else()
-      # macOS: use system or Homebrew-installed OpenMP
-      find_library(
-        OMP_LIBRARY
-        NAMES omp libomp
-        PATHS "${_llvm_lib_dir}" "/usr/local/opt/llvm/lib" "/usr/lib")
-    endif()
-  endif()
-  add_library(omp SHARED IMPORTED)
-  set_target_properties(omp PROPERTIES IMPORTED_LOCATION "${OMP_LIBRARY}")
-endif()
-
-"""
-if needle not in text:
-    raise SystemExit("Failed to locate insertion point in CMakeLists.txt")
-cmake.write_text(text.replace(needle, block, 1))
-PY
-    fi
+    # Skip OpenMP injection - using system LLVM 17 on Linux or the CMakeLists.txt already handles it
     # Don't override OMP_LIBRARY - let CMake find it from LLVM install
     "$CMAKE_BIN" -S . -B build -G Ninja \
         -DLLVM_DIR="${SEQURE_LLVM_PATH}/install/lib/cmake/llvm" \
