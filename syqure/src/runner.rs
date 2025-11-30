@@ -90,10 +90,20 @@ impl Syqure {
     }
 
     fn make_opts(&self, source: &Path, standalone: bool) -> SyCompileOpts {
+        // Resolve plugin name to full path since Codon's PluginManager doesn't use CODON_PLUGIN_PATH
+        let plugin_path = if self.opts.plugin.contains('/') || self.opts.plugin.contains('\\') {
+            // Already a path
+            self.opts.plugin.clone()
+        } else {
+            // Plugin name - resolve to full path in bundle
+            let codon_root = ensure_bundle().unwrap_or_else(|_| PathBuf::from(""));
+            codon_root.join("plugins").join(&self.opts.plugin).to_string_lossy().into_owned()
+        };
+
         SyCompileOpts {
             argv0: self.codon_bin().to_string_lossy().into_owned(),
             input: source.to_string_lossy().into_owned(),
-            plugins: vec![self.opts.plugin.clone()],
+            plugins: vec![plugin_path],
             disabled_opts: self.opts.disable_opts.clone(),
             libs: self.opts.libs.clone(),
             linker_flags: self.opts.linker_flags.clone(),
