@@ -26,7 +26,12 @@ if [ -d "$ROOT_DIR/codon/install/lib/codon" ] && [ -d "$ROOT_DIR/codon/install/l
   echo "Codon/Sequre already built; skipping rebuild."
 else
   if [ "$(uname -s)" = "Darwin" ]; then
-    SKIP_JUPYTER_KERNEL=1 "$ROOT_DIR/compile_codon.sh" --no-openmp
+    # Ensure libomp is available for OpenMP builds.
+    if ! brew list --versions libomp >/dev/null 2>&1; then
+      brew install libomp
+    fi
+    export LIBOMP_PREFIX="${LIBOMP_PREFIX:-$(brew --prefix libomp 2>/dev/null || true)}"
+    SKIP_JUPYTER_KERNEL=1 "$ROOT_DIR/compile_codon.sh"
     SYQURE_SKIP_XZ=1 "$ROOT_DIR/compile_sequre.sh" --no-seq
   else
     "$ROOT_DIR/compile_codon.sh"
@@ -69,6 +74,11 @@ if [ -n "${LLVM_PREFIX:-}" ]; then
     cp "$LLVM_PREFIX"/lib/libunwind.* "$DIST_DIR/lib/llvm/" || true
   elif ls "$LLVM_PREFIX/lib/unwind/libunwind."* >/dev/null 2>&1; then
     cp "$LLVM_PREFIX"/lib/unwind/libunwind.* "$DIST_DIR/lib/llvm/" || true
+  fi
+  # Bundle libomp from Homebrew if available so OpenMP-enabled Codon runs downstream.
+  LIBOMP_PREFIX="${LIBOMP_PREFIX:-$(brew --prefix libomp 2>/dev/null || true)}"
+  if [ -n "$LIBOMP_PREFIX" ] && ls "$LIBOMP_PREFIX"/lib/libomp.* >/dev/null 2>&1; then
+    cp "$LIBOMP_PREFIX"/lib/libomp.* "$DIST_DIR/lib/llvm/" || true
   fi
 fi
 # If libunwind still missing, drop in a copy/symlink from system locations so rpaths resolve.

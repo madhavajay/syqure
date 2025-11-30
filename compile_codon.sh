@@ -142,6 +142,12 @@ if [ -z "${LLVM_PREFIX:-}" ]; then
     LLVM_PREFIX="/opt/homebrew/opt/llvm"
 fi
 # Use nostdlib++ to avoid mixing system and Homebrew libc++
+OMP_INC=""
+OMP_LD=""
+if [ "$OPENMP_FLAG" = "ON" ] && [ -n "${LIBOMP_PREFIX:-}" ]; then
+    OMP_INC="-I${LIBOMP_PREFIX}/include"
+    OMP_LD="-L${LIBOMP_PREFIX}/lib -Wl,-rpath,${LIBOMP_PREFIX}/lib -lomp"
+fi
 cmake -S . -B build \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -149,9 +155,9 @@ cmake -S . -B build \
     -DCODON_ENABLE_OPENMP="${OPENMP_FLAG}" \
     -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
     -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
-    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib -Wno-error=character-conversion" \
-    -DCMAKE_EXE_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi" \
-    -DCMAKE_SHARED_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
+    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib -Wno-error=character-conversion ${OMP_INC}" \
+    -DCMAKE_EXE_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi ${OMP_LD}" \
+    -DCMAKE_SHARED_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi ${OMP_LD}"
 cmake --build build --config "${BUILD_TYPE}" -j$(sysctl -n hw.ncpu)
 cmake --install build --prefix="$INSTALL_DIR"
 
@@ -163,9 +169,9 @@ OPENSSL_ROOT_DIR="$OPENSSL_ROOT" cmake -S jupyter -B jupyter/build \
     -DCODON_ENABLE_OPENMP="${OPENMP_FLAG}" \
     -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
     -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
-    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib" \
-    -DCMAKE_EXE_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi" \
-    -DCMAKE_SHARED_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi" \
+    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib ${OMP_INC}" \
+    -DCMAKE_EXE_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi ${OMP_LD}" \
+    -DCMAKE_SHARED_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi ${OMP_LD}" \
     -DLLVM_DIR="$LLVM_DIR" \
     -DCODON_PATH="$INSTALL_DIR"
 cmake --build jupyter/build --config "${BUILD_TYPE}" -j$(sysctl -n hw.ncpu)
