@@ -133,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
+        os: [ubuntu-latest]
 
     steps:
       - name: Checkout code
@@ -141,14 +141,22 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Download macOS arm64 bundle
+      - name: Download Linux x86_64 bundle
         uses: actions/download-artifact@v4
         with:
-          name: syqure-bundle-aarch64-apple-darwin
+          name: syqure-bundle-x86_64-unknown-linux-gnu
           path: syqure/bundles
 
       - name: Set bundle env
-        run: echo "SYQURE_BUNDLE_FILE=${{ github.workspace }}/syqure/bundles/aarch64-apple-darwin.tar.zst" >> $GITHUB_ENV
+        run: echo "SYQURE_BUNDLE_FILE=${{ github.workspace }}/syqure/bundles/x86_64-unknown-linux-gnu.tar.zst" >> $GITHUB_ENV
+
+      - name: Install LLVM dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-17-dev clang-17
+
+      - name: Set LLVM env
+        run: echo "SYQURE_LLVM_INCLUDE=/usr/lib/llvm-17/include" >> $GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
