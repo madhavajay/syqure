@@ -243,21 +243,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Extract bundle for testing
-          BUNDLE_DIR="${{ github.workspace }}/syqure/bundles"
-          TEST_ROOT="/tmp/syqure-test"
-          mkdir -p "$TEST_ROOT"
-          zstd -dc "$BUNDLE_DIR/x86_64-unknown-linux-gnu.tar.zst" | tar -xf - -C "$TEST_ROOT"
-
-          # Set up Codon environment
-          export CODON_PATH="$TEST_ROOT"
-          export CODON_PLUGIN_PATH="$TEST_ROOT/lib/codon/plugins"
-          export CODON_STDLIB="$TEST_ROOT/lib/codon/stdlib"
-
-          echo "CODON_PATH=$CODON_PATH"
-          echo "CODON_PLUGIN_PATH=$CODON_PLUGIN_PATH"
-          echo "CODON_STDLIB=$CODON_STDLIB"
-
+          # The syqure binary uses its embedded bundle, so we don't need to extract or set env vars.
+          # Just run the example directly.
           OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
           echo "$OUT"
           echo "$OUT" | grep "CP1: my input = 5, sum = 14"
