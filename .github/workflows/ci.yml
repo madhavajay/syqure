@@ -198,14 +198,50 @@ jobs:
       - name: Tests
         run: cargo test --workspace --all-features --verbose
 
+      - name: "Integration: check Sequre was built"
+        shell: bash
+        run: |
+          echo "==> Checking if Sequre plugin exists in bundle..."
+          BUNDLE_DIR="${{ github.workspace }}/syqure/bundles"
+          if [ -f "$BUNDLE_DIR/x86_64-unknown-linux-gnu.tar.zst" ]; then
+            echo "Bundle found, extracting to check contents..."
+            mkdir -p /tmp/bundle-check
+            zstd -dc "$BUNDLE_DIR/x86_64-unknown-linux-gnu.tar.zst" | tar -xf - -C /tmp/bundle-check
+            echo "==> Bundle contents:"
+            find /tmp/bundle-check -name "*.so" -o -name "sequre" -type d | head -20
+            if [ -f "/tmp/bundle-check/lib/codon/plugins/sequre/build/libsequre.so" ]; then
+              echo "✅ Sequre plugin found in bundle!"
+            else
+              echo "❌ Sequre plugin NOT found in bundle!"
+              echo "Bundle lib structure:"
+              ls -la /tmp/bundle-check/lib/codon/ || true
+              ls -la /tmp/bundle-check/lib/codon/plugins/ || true
+              exit 1
+            fi
+          else
+            echo "❌ Bundle not found!"
+            exit 1
+          fi
+
       - name: "Integration: run example"
-        if: false  # Disabled: requires Sequre plugin and environment setup
         shell: bash
         run: |
           set -euo pipefail
-          echo "CODON_PATH=${CODON_PATH:-<unset>}"
-          echo "CODON_PLUGIN_PATH=${CODON_PLUGIN_PATH:-<unset>}"
-          echo "CODON_STDLIB=${CODON_STDLIB:-<unset>}"
+          # Extract bundle for testing
+          BUNDLE_DIR="${{ github.workspace }}/syqure/bundles"
+          TEST_ROOT="/tmp/syqure-test"
+          mkdir -p "$TEST_ROOT"
+          zstd -dc "$BUNDLE_DIR/x86_64-unknown-linux-gnu.tar.zst" | tar -xf - -C "$TEST_ROOT"
+
+          # Set up Codon environment
+          export CODON_PATH="$TEST_ROOT"
+          export CODON_PLUGIN_PATH="$TEST_ROOT/lib/codon/plugins"
+          export CODON_STDLIB="$TEST_ROOT/lib/codon/stdlib"
+
+          echo "CODON_PATH=$CODON_PATH"
+          echo "CODON_PLUGIN_PATH=$CODON_PLUGIN_PATH"
+          echo "CODON_STDLIB=$CODON_STDLIB"
+
           OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
           echo "$OUT"
           echo "$OUT" | grep "CP1: my input = 5, sum = 14"
