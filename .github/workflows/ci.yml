@@ -115,7 +115,23 @@ jobs:
           SEQURE_LLVM_TARGETS: host
           SYQURE_LLVM_INCLUDE: /usr/lib/llvm-17/include
         run: |
-          ./build.sh
+          echo "==> Checking for existing builds..."
+          ls -la codon/install/lib/codon/plugins/ 2>&1 || echo "No plugins dir yet"
+
+          echo "==> Running build.sh..."
+          ./build.sh 2>&1 | tee /tmp/build.log
+
+          echo "==> After build, checking for Sequre..."
+          ls -la codon/install/lib/codon/plugins/ 2>&1 || echo "Still no plugins dir"
+          if [ -f "codon/install/lib/codon/plugins/sequre/build/libsequre.so" ]; then
+            echo "✅ Sequre plugin built successfully!"
+          else
+            echo "❌ Sequre plugin NOT built!"
+            echo "Last 50 lines of build log:"
+            tail -50 /tmp/build.log
+            exit 1
+          fi
+
           ls syqure/bundles || true
 
       - name: Upload Linux x86_64 bundle
