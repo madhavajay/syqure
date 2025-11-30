@@ -199,6 +199,7 @@ jobs:
         run: cargo test --workspace --all-features --verbose
 
       - name: "Integration: run example"
+        if: false  # Disabled: requires Sequre plugin and environment setup
         shell: bash
         run: |
           set -euo pipefail
