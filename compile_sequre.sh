@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build Sequre and its dependencies (LLVM, Codon, Seq) on Linux (macOS best effort).
+# Version: 2024-11-30 - Fixed GMP path for cross-platform support
 # Environment overrides:
 #   SEQURE_PATH         : repo root (default: script location)
 #   SEQURE_LLVM_PATH    : LLVM build/install dir (default: $SEQURE_PATH/codon-llvm)
