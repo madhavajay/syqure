@@ -99,9 +99,9 @@ jobs:
             codon-llvm/install
             codon/install
             target
-          key: bundle-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
+          key: bundle-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
           restore-keys: |
-            bundle-v2-${{ runner.os }}-${{ runner.arch }}-
+            bundle-v3-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build Codon/Sequre + bundle
         shell: bash
