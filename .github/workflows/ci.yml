@@ -113,6 +113,7 @@ jobs:
           NINJA_BIN: ninja
           CODON_SYSTEM_LIBRARIES: /usr/lib/x86_64-linux-gnu
           SEQURE_LLVM_TARGETS: host
+          SYQURE_LLVM_INCLUDE: /usr/lib/llvm-17/include
         run: |
           ./build.sh
           ls syqure/bundles || true
