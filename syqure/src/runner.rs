@@ -97,7 +97,11 @@ impl Syqure {
         } else {
             // Plugin name - resolve to full path in bundle
             let codon_root = ensure_bundle().unwrap_or_else(|_| PathBuf::from(""));
-            codon_root.join("plugins").join(&self.opts.plugin).to_string_lossy().into_owned()
+            codon_root
+                .join("plugins")
+                .join(&self.opts.plugin)
+                .to_string_lossy()
+                .into_owned()
         };
 
         SyCompileOpts {
