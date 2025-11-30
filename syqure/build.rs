@@ -1,6 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn main() {
     set_bundle_env();
@@ -13,7 +13,16 @@ fn main() {
     // Allow callers to point at Codon/Sequre headers if needed later.
     if let Ok(include) = env::var("SYQURE_CPP_INCLUDE") {
         bridge.include(include);
-    } else if let Some(repo_root) = repo_root() {
+    }
+    // Prefer headers from the prebuilt bundle if available.
+    if let Some(root) = &bundle_root {
+        let bundle_inc = root.join("include");
+        if bundle_inc.exists() {
+            bridge.include(&bundle_inc);
+        }
+    }
+    // Fallback to repo-installed headers.
+    if let Some(repo_root) = repo_root() {
         let codon_src = repo_root.join("codon");
         if codon_src.exists() {
             bridge.include(&codon_src);
@@ -25,13 +34,6 @@ fn main() {
         let llvm_install_inc = repo_root.join("codon/llvm-project/install/include");
         if llvm_install_inc.exists() {
             bridge.include(&llvm_install_inc);
-        }
-    }
-    // If we only have a prebuilt bundle, use its headers.
-    if let Some(root) = &bundle_root {
-        let bundle_inc = root.join("include");
-        if bundle_inc.exists() {
-            bridge.include(&bundle_inc);
         }
     }
     if let Ok(llvm_inc) = env::var("SYQURE_LLVM_INCLUDE") {
@@ -47,19 +49,33 @@ fn main() {
             println!("cargo:rustc-link-search=native={}", dir);
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir);
         }
-    } else if let Some(repo_root) = repo_root() {
-        let default_lib = repo_root.join("codon/install/lib/codon");
-        if default_lib.exists() {
-            let path = default_lib.display();
-            println!("cargo:rustc-link-search=native={}", path);
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+    } else {
+        let mut linked = false;
+        if let Some(root) = &bundle_root {
+            let bundle_lib = root.join("lib/codon");
+            if bundle_lib.exists() {
+                let path = bundle_lib.display();
+                println!("cargo:rustc-link-search=native={}", path);
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                linked = true;
+            }
+            // Also provide LLVM runtime libs (libc++/libc++abi) from the bundle if present.
+            let bundle_llvm = root.join("lib/llvm");
+            if bundle_llvm.exists() {
+                let path = bundle_llvm.display();
+                println!("cargo:rustc-link-search=native={}", path);
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+            }
         }
-    } else if let Some(root) = &bundle_root {
-        let bundle_lib = root.join("lib/codon");
-        if bundle_lib.exists() {
-            let path = bundle_lib.display();
-            println!("cargo:rustc-link-search=native={}", path);
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+        if !linked {
+            if let Some(repo_root) = repo_root() {
+                let default_lib = repo_root.join("codon/install/lib/codon");
+                if default_lib.exists() {
+                    let path = default_lib.display();
+                    println!("cargo:rustc-link-search=native={}", path);
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                }
+            }
         }
     }
 
@@ -158,16 +174,102 @@ fn bundle_root() -> Option<PathBuf> {
     }
     std::fs::create_dir_all(&extract_dir).ok()?;
 
-    let status = Command::new("tar")
-        .arg("-xf")
+    // Extract .tar.zst bundle using zstd | tar to avoid relying on tar -I support.
+    let mut zstd = Command::new("zstd")
+        .arg("-dc")
         .arg(&bundle)
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn zstd for bundle");
+    let tar_status = Command::new("tar")
+        .arg("-xf")
+        .arg("-")
         .arg("-C")
         .arg(&extract_dir)
+        .stdin(Stdio::from(
+            zstd.stdout.take().expect("missing zstd stdout pipe"),
+        ))
         .status()
-        .expect("failed to run tar to extract SYQURE_BUNDLE_FILE");
-    if !status.success() {
-        panic!("failed to extract bundle {} into {}", bundle, extract_dir.display());
+        .expect("failed to run tar to extract bundle");
+    let _ = zstd.wait();
+    if !tar_status.success() {
+        panic!(
+            "failed to extract bundle {} into {}",
+            bundle,
+            extract_dir.display()
+        );
+    }
+
+    // Normalize dylib install names to use bundled LLVM runtimes.
+    if let Err(e) = rewrite_install_names(&extract_dir) {
+        eprintln!("warning: failed to rewrite install names: {}", e);
     }
 
     Some(extract_dir)
+}
+
+fn rewrite_install_names(bundle_root: &Path) -> Result<(), String> {
+    let codon_lib = bundle_root.join("lib/codon");
+    let llvm_lib = bundle_root.join("lib/llvm");
+    if !codon_lib.exists() || !llvm_lib.exists() {
+        return Ok(());
+    }
+    let replacements = [
+        (
+            "/opt/homebrew/opt/llvm/lib/c++/libc++abi.1.dylib",
+            "@loader_path/../llvm/libc++abi.1.dylib",
+        ),
+        (
+            "/opt/homebrew/opt/llvm/lib/c++/libc++.1.dylib",
+            "@loader_path/../llvm/libc++.1.dylib",
+        ),
+        (
+            "/opt/homebrew/opt/llvm/lib/libunwind.1.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
+        (
+            "@rpath/libunwind.1.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
+        (
+            "/usr/lib/libunwind.1.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
+        (
+            "/usr/lib/libunwind.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
+        (
+            "/usr/lib/system/libunwind.dylib",
+            "@loader_path/../llvm/libunwind.1.dylib",
+        ),
+    ];
+    let targets = [
+        codon_lib.join("libcodonrt.dylib"),
+        codon_lib.join("libcodonc.dylib"),
+        llvm_lib.join("libc++.1.0.dylib"),
+        llvm_lib.join("libc++abi.1.0.dylib"),
+    ];
+    for path in targets {
+        if !path.exists() {
+            continue;
+        }
+        for (old, newv) in &replacements {
+            let status = Command::new("install_name_tool")
+                .arg("-change")
+                .arg(old)
+                .arg(newv)
+                .arg(&path)
+                .status()
+                .map_err(|e| format!("install_name_tool failed: {}", e))?;
+            if !status.success() {
+                return Err(format!(
+                    "install_name_tool returned {} while patching {}",
+                    status,
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(())
 }

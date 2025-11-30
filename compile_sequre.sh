@@ -186,7 +186,27 @@ build_llvm() {
     fi
     echo "Building LLVM into ${SEQURE_LLVM_PATH}..."
     rm -rf "$SEQURE_LLVM_PATH"
-    git clone --depth 1 -b codon-17.0.6 https://github.com/exaloop/llvm-project "$SEQURE_LLVM_PATH"
+    echo "Cloning llvm-project (codon-17.0.6 tag) with retries..."
+    for attempt in 1 2 3; do
+        if git clone --depth 1 -b codon-17.0.6 https://github.com/exaloop/llvm-project "$SEQURE_LLVM_PATH"; then
+            break
+        fi
+        echo "Clone attempt ${attempt} failed; retrying in 10s" >&2
+        sleep 10
+    done
+    if [ ! -d "$SEQURE_LLVM_PATH/.git" ]; then
+        echo "Clone failed; falling back to tarball download..." >&2
+        mkdir -p "$SEQURE_LLVM_PATH"
+        tmp_tar="$(mktemp /tmp/llvm-project.XXXXXX.tar.gz)"
+        if curl -Lf "https://codeload.github.com/exaloop/llvm-project/tar.gz/codon-17.0.6" -o "$tmp_tar"; then
+            tar -xzf "$tmp_tar" --strip-components=1 -C "$SEQURE_LLVM_PATH"
+            rm -f "$tmp_tar"
+        fi
+    fi
+    if [ ! -d "$SEQURE_LLVM_PATH/.git" ] && [ ! -d "$SEQURE_LLVM_PATH/llvm" ] && [ ! -f "$SEQURE_LLVM_PATH/CMakeLists.txt" ]; then
+        echo "Error: failed to obtain exaloop/llvm-project (clone and tarball both failed)" >&2
+        exit 1
+    fi
     pushd "$SEQURE_LLVM_PATH" >/dev/null
     "$CMAKE_BIN" -S llvm -B build -G Ninja \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \

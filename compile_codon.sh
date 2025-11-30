@@ -90,8 +90,28 @@ else
     echo "=== Building LLVM from source (this takes 30-60 min) ==="
     if [ ! -d "llvm-project/.git" ]; then
         rm -rf llvm-project
-        # Use codon-17.0.6 tag (LLVM 17) for Codon 0.17.0 compatibility
-        git clone -b codon-17.0.6 --depth 1 https://github.com/exaloop/llvm-project
+        # Use codon-17.0.6 tag (LLVM 17) for Codon 0.17.0 compatibility.
+        echo "Cloning llvm-project (codon-17.0.6) with retries..."
+        for attempt in 1 2 3; do
+            if git clone -b codon-17.0.6 --depth 1 https://github.com/exaloop/llvm-project; then
+                break
+            fi
+            echo "Clone attempt ${attempt} failed; retrying in 10s" >&2
+            sleep 10
+        done
+        if [ ! -d "llvm-project/.git" ]; then
+            echo "Clone failed; falling back to tarball download..." >&2
+            mkdir -p llvm-project
+            tmp_tar="$(mktemp /tmp/llvm-project.XXXXXX.tar.gz)"
+            if curl -Lf "https://codeload.github.com/exaloop/llvm-project/tar.gz/codon-17.0.6" -o "$tmp_tar"; then
+                tar -xzf "$tmp_tar" --strip-components=1 -C llvm-project
+                rm -f "$tmp_tar"
+            fi
+        fi
+        if [ ! -d "llvm-project/.git" ] && [ ! -d "llvm-project/llvm" ] && [ ! -f "llvm-project/CMakeLists.txt" ]; then
+            echo "Error: failed to obtain exaloop/llvm-project (clone and tarball both failed)" >&2
+            exit 1
+        fi
     fi
     # Don't build OpenMP as part of LLVM - use Homebrew's libomp instead
     # This avoids the clang dependency for OpenMP tests
@@ -129,7 +149,7 @@ cmake -S . -B build \
     -DCODON_ENABLE_OPENMP="${OPENMP_FLAG}" \
     -DCMAKE_C_COMPILER="$LLVM_PREFIX/bin/clang" \
     -DCMAKE_CXX_COMPILER="$LLVM_PREFIX/bin/clang++" \
-    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib" \
+    -DCMAKE_CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib -Wno-error=character-conversion" \
     -DCMAKE_EXE_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi" \
     -DCMAKE_SHARED_LINKER_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
 cmake --build build --config "${BUILD_TYPE}" -j$(sysctl -n hw.ncpu)

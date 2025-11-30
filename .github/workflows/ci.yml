@@ -25,10 +25,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup tmate session (debug)
-        uses: mxschmitt/action-tmate@v3
-        if: always()
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -41,8 +37,6 @@ jobs:
             codon-seq/install
             target
           key: bundle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'codon-seq/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
-          restore-keys: |
-            bundle-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install LLVM
         run: brew install llvm
@@ -132,7 +126,7 @@ jobs:
   rust:
     name: Rust Checks
     runs-on: ${{ matrix.os }}
-    if: false  # temporarily disabled
+    if: true
     continue-on-error: false
     needs: [bundle-linux-x86]
     strategy:
@@ -195,15 +189,13 @@ jobs:
       - name: Tests
         run: cargo test --workspace --all-features --verbose
 
-      - name: Build Codon/Sequre and syqure
-        shell: bash
-        run: |
-          ./build.sh
-
       - name: "Integration: run example"
         shell: bash
         run: |
           set -euo pipefail
+          echo "CODON_PATH=${CODON_PATH:-<unset>}"
+          echo "CODON_PLUGIN_PATH=${CODON_PLUGIN_PATH:-<unset>}"
+          echo "CODON_STDLIB=${CODON_STDLIB:-<unset>}"
           OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
           echo "$OUT"
           echo "$OUT" | grep "CP1: my input = 5, sum = 14"

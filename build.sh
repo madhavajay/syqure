@@ -44,18 +44,55 @@ rm -f "$BUNDLE_OUT"
 # Bundle a portable tree with the binary and Codon/Sequre libs
 DIST_DIR="$ROOT_DIR/target/dist/syqure"
 BIN_SRC="$ROOT_DIR/target/debug/syqure"
-mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib"
+mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib" "$DIST_DIR/include"
 if [ -x "$BIN_SRC" ]; then
   cp "$BIN_SRC" "$DIST_DIR/bin/"
 fi
 if [ -d "$CODON_PATH/lib/codon" ]; then
   rm -rf "$DIST_DIR/lib/codon"
   cp -R "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
+  # Some Codon builds look for plugins at lib/codon/sequre/...; provide a symlink to plugins/sequre.
+  if [ -d "$DIST_DIR/lib/codon/plugins/sequre" ] && [ ! -e "$DIST_DIR/lib/codon/sequre" ]; then
+    (cd "$DIST_DIR/lib/codon" && ln -s "plugins/sequre" "sequre") || true
+  fi
 fi
-# Include headers so downstream Rust builds can compile without re-building Codon.
+# Include LLVM runtime libs (libc++/libc++abi) so downstream runs don't need Homebrew LLVM.
+if [ -n "${LLVM_PREFIX:-}" ]; then
+  rm -rf "$DIST_DIR/lib/llvm"
+  mkdir -p "$DIST_DIR/lib/llvm"
+  if [ -d "$LLVM_PREFIX/lib/c++" ]; then
+    cp -R "$LLVM_PREFIX/lib/c++/." "$DIST_DIR/lib/llvm/"
+  fi
+  # Homebrew may place libunwind under lib/ or lib/unwind; copy whichever exists.
+  if ls "$LLVM_PREFIX/lib/libunwind."* >/dev/null 2>&1; then
+    cp "$LLVM_PREFIX"/lib/libunwind.* "$DIST_DIR/lib/llvm/" || true
+  elif ls "$LLVM_PREFIX/lib/unwind/libunwind."* >/dev/null 2>&1; then
+    cp "$LLVM_PREFIX"/lib/unwind/libunwind.* "$DIST_DIR/lib/llvm/" || true
+  fi
+fi
+# If libunwind still missing, drop in a copy/symlink from system locations so rpaths resolve.
+if [ ! -f "$DIST_DIR/lib/llvm/libunwind.1.dylib" ]; then
+  for cand in /usr/lib/libunwind.1.dylib /usr/lib/libunwind.dylib /usr/lib/system/libunwind.dylib; do
+    if [ -f "$cand" ]; then
+      cp "$cand" "$DIST_DIR/lib/llvm/libunwind.1.dylib" || ln -s "$cand" "$DIST_DIR/lib/llvm/libunwind.1.dylib" || true
+      break
+    fi
+  done
+fi
+# Also drop a libunwind.dylib alias if we have a source.
+if [ ! -f "$DIST_DIR/lib/llvm/libunwind.dylib" ] && [ -f "$DIST_DIR/lib/llvm/libunwind.1.dylib" ]; then
+  ln -s "libunwind.1.dylib" "$DIST_DIR/lib/llvm/libunwind.dylib" || true
+fi
+# Include headers so downstream builds (Rust checks) can compile without rebuilding Codon.
 if [ -d "$CODON_PATH/include" ]; then
   rm -rf "$DIST_DIR/include"
-  cp -R "$CODON_PATH/include" "$DIST_DIR/include"
+  mkdir -p "$DIST_DIR/include"
+  cp -R "$CODON_PATH/include/." "$DIST_DIR/include/"
+fi
+# Also ship LLVM headers from the bundled toolchain.
+if [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]; then
+  mkdir -p "$DIST_DIR/include"
+  cp -R "$ROOT_DIR/codon/llvm-project/install/include/." "$DIST_DIR/include/"
 fi
 
 tar -C "$DIST_DIR" -c . | zstd -19 -o "$BUNDLE_OUT"
