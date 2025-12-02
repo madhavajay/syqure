@@ -36,7 +36,7 @@ jobs:
             codon/install
             codon-seq/install
             target
-          key: bundle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'codon-seq/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
+          key: bundle-v5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/**', 'codon-seq/**', 'sequre/**') }}
 
       - name: Install LLVM
         run: brew install llvm
@@ -99,9 +99,7 @@ jobs:
             codon-llvm/install
             codon/install
             target
-          key: bundle-v4-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
-          restore-keys: |
-            bundle-v4-${{ runner.os }}-${{ runner.arch }}-
+          key: bundle-v5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/**', 'codon-seq/**', 'sequre/**') }}
 
       - name: Build Codon/Sequre + bundle
         shell: bash
