@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build Sequre and its dependencies (LLVM, Codon, Seq) on Linux (macOS best effort).
+# Cache buster: NUM_THREADS=1
 # Environment overrides:
 #   SEQURE_PATH         : repo root (default: script location)
 #   SEQURE_LLVM_PATH    : LLVM build/install dir (default: $SEQURE_PATH/codon-llvm)
