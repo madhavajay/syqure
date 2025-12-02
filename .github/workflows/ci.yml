@@ -122,7 +122,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export SYQURE_DISABLE_OPTS=core-parallel-openmp
           export OMP_NUM_THREADS=1
           echo "CODON_PATH=${CODON_PATH:-<unset>}"
           echo "CODON_PLUGIN_PATH=${CODON_PLUGIN_PATH:-<unset>}"
