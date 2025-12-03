@@ -237,6 +237,21 @@ jobs:
             exit 1
           fi
 
+      - name: Smoke test bundle (two-party sum)
+        shell: bash
+        env:
+          SYQURE_BUNDLE_FILE: ${{ github.workspace }}/syqure/bundles/x86_64-unknown-linux-gnu.tar.zst
+        run: |
+          set -euo pipefail
+          if [ ! -f "$SYQURE_BUNDLE_FILE" ]; then
+            echo "Bundle missing at $SYQURE_BUNDLE_FILE"
+            exit 1
+          fi
+          OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
+          echo "$OUT"
+          echo "$OUT" | grep "CP1: my input = 5, sum = 14"
+          echo "$OUT" | grep "CP2: my input = 9, sum = 14"
+
       - name: "Integration: run example"
         shell: bash
         run: |
