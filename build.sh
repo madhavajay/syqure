@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Cache version: NUM_THREADS=1
 
 # Unified build helper:
 # - Builds Codon (macOS: --no-openmp)
