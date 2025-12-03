@@ -82,6 +82,8 @@ fn main() {
     // Link against Codon runtime + compiler; expect the caller's search path to be set.
     println!("cargo:rustc-link-lib=dylib=codonrt");
     println!("cargo:rustc-link-lib=dylib=codonc");
+    // OpenMP is required by Sequre kernels; link it so JIT runs can resolve symbols.
+    println!("cargo:rustc-link-lib=dylib=omp");
 
     bridge
         .file("src/ffi/bridge.cc")

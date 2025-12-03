@@ -1,27 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: ./sequre.sh path/to/example.codon [-- codon args]
-# Pre-req: CODON_PATH points at your Codon install (defaults to repo codon/install).
+# Usage: ./sequre.sh path/to/example.codon [-- program args]
+# Thin wrapper that delegates to the Rust CLI (syqure) so we share its bundling/linking fixes.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CODON_PATH_DEFAULT="$SCRIPT_DIR/codon/install"
-CODON_PATH="${CODON_PATH:-$CODON_PATH_DEFAULT}"
+ROOT_DIR="$SCRIPT_DIR"
 
 if [ $# -lt 1 ]; then
-  echo "Usage: $0 <file.codon> [-- extra codon args]" >&2
+  echo "Usage: $0 <file.codon> [-- extra program args]" >&2
   exit 1
 fi
 
 TARGET="$1"; shift || true
 
-# Clean stale sockets
-find . -name 'sock.*' -exec rm {} \; 2>/dev/null || true
+# Clean stale sockets (syqure also does this, but it is cheap).
+find "$ROOT_DIR" -name 'sock.*' -exec rm {} \; 2>/dev/null || true
 
-CMD=("${CODON_PATH}/bin/codon" run --disable-opt="core-pythonic-list-addition-opt" -plugin sequre "$TARGET")
-if [ "$#" -gt 0 ]; then
-  CMD+=("$@")
+# Prefer an existing debug build; fall back to cargo run so the caller gets logs.
+SYQURE_BIN="$ROOT_DIR/target/debug/syqure"
+if [ -x "$SYQURE_BIN" ]; then
+  exec "$SYQURE_BIN" "$TARGET" "$@"
 fi
 
-export CODON_DEBUG=lt
-exec "${CMD[@]}"
+exec cargo run -p syqure -- "$TARGET" "$@"

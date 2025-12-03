@@ -24,10 +24,16 @@ pub struct CompileOptions {
 
 impl Default for CompileOptions {
     fn default() -> Self {
+        let mut disable_opts = vec!["core-pythonic-list-addition-opt".to_string()];
+        if let Ok(extra) = std::env::var("SYQURE_DISABLE_OPTS") {
+            for opt in extra.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                disable_opts.push(opt.to_string());
+            }
+        }
         Self {
             codon_path: default_codon_path(),
             plugin: "sequre".to_string(),
-            disable_opts: vec!["core-pythonic-list-addition-opt".to_string()],
+            disable_opts,
             release: false,
             run_after_build: true,
             program_args: Vec::new(),
