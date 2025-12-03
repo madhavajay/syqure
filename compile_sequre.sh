@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build Sequre and its dependencies (LLVM, Codon, Seq) on Linux (macOS best effort).
+# Version: 2024-11-30 - Fixed GMP path for cross-platform support
 # Environment overrides:
 #   SEQURE_PATH         : repo root (default: script location)
 #   SEQURE_LLVM_PATH    : LLVM build/install dir (default: $SEQURE_PATH/codon-llvm)
@@ -33,10 +34,23 @@ done
 SEQURE_PATH="${SEQURE_PATH:-$ROOT_DIR/sequre}"
 # Keep toolchain defaults anchored at the repo root so they point to the shared builds.
 SEQURE_LLVM_PATH="${SEQURE_LLVM_PATH:-$ROOT_DIR/codon-llvm}"
+SEQURE_LLVM_TARGETS="${SEQURE_LLVM_TARGETS:-all}"
+if [ -z "${SEQURE_LLVM_PROJECTS:-}" ] && [ "$(uname -s)" = "Linux" ]; then
+    SEQURE_LLVM_PROJECTS="clang"
+fi
+if [ -z "${SEQURE_LLVM_RUNTIMES:-}" ] && [ "$(uname -s)" = "Linux" ]; then
+    SEQURE_LLVM_RUNTIMES="openmp"
+fi
 SEQURE_CODON_PATH="${SEQURE_CODON_PATH:-$ROOT_DIR/codon}"
 SEQURE_SEQ_PATH="${SEQURE_SEQ_PATH:-$ROOT_DIR/codon-seq}"
-# macOS: prefer the Homebrew gcc lib path if present so we can link libgfortran
-CODON_SYSTEM_LIBRARIES="${CODON_SYSTEM_LIBRARIES:-/opt/homebrew/opt/gcc/lib/gcc/current}"
+# macOS: prefer the Homebrew gcc lib path if present so we can link libgfortran; Linux defaults to multiarch lib dir
+if [ -z "${CODON_SYSTEM_LIBRARIES:-}" ]; then
+    if [ "$(uname -s)" = "Linux" ]; then
+        CODON_SYSTEM_LIBRARIES="/usr/lib/$(uname -m)-linux-gnu"
+    else
+        CODON_SYSTEM_LIBRARIES="/opt/homebrew/opt/gcc/lib/gcc/current"
+    fi
+fi
 # Use the already-downloaded xz source from the Codon build to avoid extra network fetches
 XZ_SOURCE_DIR="${XZ_SOURCE_DIR:-${SEQURE_CODON_PATH}/build/_deps/xz-src}"
 CMAKE_BIN="${CMAKE:-cmake}"
@@ -55,15 +69,26 @@ fi
 CC="${CC:-$LLVM_PREFIX/bin/clang}"
 CXX="${CXX:-$LLVM_PREFIX/bin/clang++}"
 COMMON_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+OS_NAME="$(uname -s)"
 if [ "$ENABLE_ASAN" = "1" ]; then
     SAN_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
     C_FLAGS="$SAN_FLAGS"
-    CXX_FLAGS="$SAN_FLAGS -stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib"
-    LD_FLAGS="$SAN_FLAGS -nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
+    if [ "$OS_NAME" = "Darwin" ]; then
+        CXX_FLAGS="$SAN_FLAGS -stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib"
+        LD_FLAGS="$SAN_FLAGS -nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
+    else
+        CXX_FLAGS="$SAN_FLAGS"
+        LD_FLAGS="$SAN_FLAGS"
+    fi
 else
     C_FLAGS=""
-    CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib"
-    LD_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
+    if [ "$OS_NAME" = "Darwin" ]; then
+        CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib"
+        LD_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
+    else
+        CXX_FLAGS=""
+        LD_FLAGS=""
+    fi
 fi
 # Add the LLVM headers explicitly so Codon’s headers (which include llvm/Support/…) resolve.
 if [ -n "$LLVM_INCLUDE_DIR" ]; then
@@ -162,9 +187,9 @@ build_llvm() {
     fi
     echo "Building LLVM into ${SEQURE_LLVM_PATH}..."
     rm -rf "$SEQURE_LLVM_PATH"
-    echo "Cloning llvm-project (codon branch) with retries..."
+    echo "Cloning llvm-project (codon-17.0.6 tag) with retries..."
     for attempt in 1 2 3; do
-        if git clone --depth 1 -b codon https://github.com/exaloop/llvm-project "$SEQURE_LLVM_PATH"; then
+        if git clone --depth 1 -b codon-17.0.6 https://github.com/exaloop/llvm-project "$SEQURE_LLVM_PATH"; then
             break
         fi
         echo "Clone attempt ${attempt} failed; retrying in 10s" >&2
@@ -174,7 +199,7 @@ build_llvm() {
         echo "Clone failed; falling back to tarball download..." >&2
         mkdir -p "$SEQURE_LLVM_PATH"
         tmp_tar="$(mktemp /tmp/llvm-project.XXXXXX.tar.gz)"
-        if curl -Lf "https://codeload.github.com/exaloop/llvm-project/tar.gz/codon" -o "$tmp_tar"; then
+        if curl -Lf "https://codeload.github.com/exaloop/llvm-project/tar.gz/codon-17.0.6" -o "$tmp_tar"; then
             tar -xzf "$tmp_tar" --strip-components=1 -C "$SEQURE_LLVM_PATH"
             rm -f "$tmp_tar"
         fi
@@ -190,7 +215,9 @@ build_llvm() {
         -DLLVM_ENABLE_RTTI=ON \
         -DLLVM_ENABLE_ZLIB=OFF \
         -DLLVM_ENABLE_TERMINFO=OFF \
-        -DLLVM_TARGETS_TO_BUILD=all \
+        -DLLVM_TARGETS_TO_BUILD="${SEQURE_LLVM_TARGETS}" \
+        -DLLVM_ENABLE_PROJECTS="${SEQURE_LLVM_PROJECTS}" \
+        -DLLVM_ENABLE_RUNTIMES="${SEQURE_LLVM_RUNTIMES}" \
         $COMMON_FLAGS
     "$CMAKE_BIN" --build build --config "${BUILD_TYPE}"
     "$CMAKE_BIN" --install build --prefix="$SEQURE_LLVM_PATH/install"
@@ -203,9 +230,13 @@ build_codon() {
         return
     fi
     echo "Building Codon into ${SEQURE_CODON_PATH}..."
-    rm -rf "$SEQURE_CODON_PATH"
-    git clone https://github.com/exaloop/codon.git "$SEQURE_CODON_PATH"
+    # Only clone if directory doesn't exist (preserve local modifications)
+    if [ ! -d "$SEQURE_CODON_PATH" ]; then
+        git clone https://github.com/exaloop/codon.git "$SEQURE_CODON_PATH"
+    fi
     pushd "$SEQURE_CODON_PATH" >/dev/null
+    # Skip OpenMP injection - using system LLVM 17 on Linux or the CMakeLists.txt already handles it
+    # Don't override OMP_LIBRARY - let CMake find it from LLVM install
     "$CMAKE_BIN" -S . -B build -G Ninja \
         -DLLVM_DIR="${SEQURE_LLVM_PATH}/install/lib/cmake/llvm" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
@@ -215,6 +246,8 @@ build_codon() {
         -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
         -DCMAKE_EXE_LINKER_FLAGS="$LD_FLAGS" \
         -DCMAKE_SHARED_LINKER_FLAGS="$LD_FLAGS" \
+        -DCODON_GPU=OFF \
+        -DCODON_JUPYTER=OFF \
         $COMMON_FLAGS
     "$CMAKE_BIN" --build build --config "${BUILD_TYPE}"
     "$CMAKE_BIN" --install build --prefix="${SEQURE_CODON_PATH}/install"

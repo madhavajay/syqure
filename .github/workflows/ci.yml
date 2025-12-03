@@ -18,6 +18,7 @@ jobs:
   bundle-macos-arm:
     name: Build Bundles (macOS arm64)
     runs-on: macos-latest
+    if: false  # disabled for Linux branch
     steps:
       - name: Checkout code (with submodules)
         uses: actions/checkout@v4
@@ -35,7 +36,7 @@ jobs:
             codon/install
             codon-seq/install
             target
-          key: bundle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'codon-seq/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
+          key: bundle-v5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/**', 'codon-seq/**', 'sequre/**') }}
 
       - name: Install LLVM
         run: brew install llvm
@@ -52,16 +53,107 @@ jobs:
           name: syqure-bundle-aarch64-apple-darwin
           path: syqure/bundles/*.tar.zst
 
+  bundle-linux-x86:
+    name: Build Bundles (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang-17 \
+            lld-17 \
+            llvm-17-dev \
+            libc++-17-dev \
+            libc++abi-17-dev \
+            libomp-17-dev \
+            ninja-build \
+            cmake \
+            pkg-config \
+            git \
+            curl \
+            ca-certificates \
+            libssl-dev \
+            zlib1g-dev \
+            gfortran \
+            python3 \
+            python3-pip \
+            zstd
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-17 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-17 100
+          sudo update-alternatives --install /usr/bin/llvm-config llvm-config /usr/bin/llvm-config-17 100
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Codon/Sequre build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            codon-llvm/install
+            codon/install
+            target
+          key: bundle-v6-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/**', 'codon-seq/**', 'sequre/**') }}
+
+      - name: Clear old bundle artifacts
+        shell: bash
+        run: |
+          rm -f syqure/bundles/*.tar.zst || true
+          rm -rf codon/install/lib/codon/plugins/sequre || true
+
+      - name: Build Codon/Sequre + bundle
+        shell: bash
+        env:
+          LLVM_PREFIX: /usr/lib/llvm-17
+          CC: clang
+          CXX: clang++
+          CMAKE: cmake
+          NINJA_BIN: ninja
+          CODON_SYSTEM_LIBRARIES: /usr/lib/x86_64-linux-gnu
+          SEQURE_LLVM_TARGETS: host
+          SYQURE_LLVM_INCLUDE: /usr/lib/llvm-17/include
+        run: |
+          echo "==> Checking for existing builds..."
+          ls -la codon/install/lib/codon/plugins/ 2>&1 || echo "No plugins dir yet"
+
+          echo "==> Running build.sh..."
+          ./build.sh 2>&1 | tee /tmp/build.log
+
+          echo "==> After build, checking for Sequre..."
+          ls -la codon/install/lib/codon/plugins/ 2>&1 || echo "Still no plugins dir"
+          if [ -f "codon/install/lib/codon/plugins/sequre/build/libsequre.so" ]; then
+            echo "✅ Sequre plugin built successfully!"
+          else
+            echo "❌ Sequre plugin NOT built!"
+            echo "Last 50 lines of build log:"
+            tail -50 /tmp/build.log
+            exit 1
+          fi
+
+          ls syqure/bundles || true
+
+      - name: Upload Linux x86_64 bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: syqure-bundle-x86_64-unknown-linux-gnu
+          path: syqure/bundles/*.tar.zst
+
   rust:
     name: Rust Checks
     runs-on: ${{ matrix.os }}
     if: true
     continue-on-error: false
-    needs: [bundle-macos-arm]
+    needs: [bundle-linux-x86]
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest]
+        os: [ubuntu-latest]
 
     steps:
       - name: Checkout code
@@ -69,14 +161,22 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Download macOS arm64 bundle
+      - name: Download Linux x86_64 bundle
         uses: actions/download-artifact@v4
         with:
-          name: syqure-bundle-aarch64-apple-darwin
+          name: syqure-bundle-x86_64-unknown-linux-gnu
           path: syqure/bundles
 
       - name: Set bundle env
-        run: echo "SYQURE_BUNDLE_FILE=${{ github.workspace }}/syqure/bundles/aarch64-apple-darwin.tar.zst" >> $GITHUB_ENV
+        run: echo "SYQURE_BUNDLE_FILE=${{ github.workspace }}/syqure/bundles/x86_64-unknown-linux-gnu.tar.zst" >> $GITHUB_ENV
+
+      - name: Install LLVM dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-17-dev clang-17
+
+      - name: Set LLVM env
+        run: echo "SYQURE_LLVM_INCLUDE=/usr/lib/llvm-17/include" >> $GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -118,13 +218,57 @@ jobs:
       - name: Tests
         run: cargo test --workspace --all-features --verbose
 
+      - name: "Integration: check Sequre was built"
+        shell: bash
+        run: |
+          echo "==> Checking if Sequre plugin exists in bundle..."
+          BUNDLE_DIR="${{ github.workspace }}/syqure/bundles"
+          if [ -f "$BUNDLE_DIR/x86_64-unknown-linux-gnu.tar.zst" ]; then
+            echo "Bundle found, extracting to check contents..."
+            mkdir -p /tmp/bundle-check
+            zstd -dc "$BUNDLE_DIR/x86_64-unknown-linux-gnu.tar.zst" | tar -xf - -C /tmp/bundle-check
+            echo "==> Bundle contents:"
+            find /tmp/bundle-check -name "*.so" -o -name "sequre" -type d | head -20
+            if [ -f "/tmp/bundle-check/lib/codon/plugins/sequre/build/libsequre.so" ]; then
+              echo "✅ Sequre plugin found in bundle!"
+            else
+              echo "❌ Sequre plugin NOT found in bundle!"
+              echo "Bundle lib structure:"
+              ls -la /tmp/bundle-check/lib/codon/ || true
+              ls -la /tmp/bundle-check/lib/codon/plugins/ || true
+              exit 1
+            fi
+          else
+            echo "❌ Bundle not found!"
+            exit 1
+          fi
+
+      - name: Fingerprint bundle
+        shell: bash
+        run: |
+          sha256sum syqure/bundles/x86_64-unknown-linux-gnu.tar.zst
+
+      - name: Smoke test bundle (two-party sum)
+        shell: bash
+        env:
+          SYQURE_BUNDLE_FILE: ${{ github.workspace }}/syqure/bundles/x86_64-unknown-linux-gnu.tar.zst
+        run: |
+          set -euo pipefail
+          if [ ! -f "$SYQURE_BUNDLE_FILE" ]; then
+            echo "Bundle missing at $SYQURE_BUNDLE_FILE"
+            exit 1
+          fi
+          OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
+          echo "$OUT"
+          echo "$OUT" | grep "CP1: my input = 5, sum = 14"
+          echo "$OUT" | grep "CP2: my input = 9, sum = 14"
+
       - name: "Integration: run example"
         shell: bash
         run: |
           set -euo pipefail
-          echo "CODON_PATH=${CODON_PATH:-<unset>}"
-          echo "CODON_PLUGIN_PATH=${CODON_PLUGIN_PATH:-<unset>}"
-          echo "CODON_STDLIB=${CODON_STDLIB:-<unset>}"
+          # The syqure binary uses its embedded bundle, so we don't need to extract or set env vars.
+          # Just run the example directly.
           OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
           echo "$OUT"
           echo "$OUT" | grep "CP1: my input = 5, sum = 14"
