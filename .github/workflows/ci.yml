@@ -99,7 +99,13 @@ jobs:
             codon-llvm/install
             codon/install
             target
-          key: bundle-v5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/**', 'codon-seq/**', 'sequre/**') }}
+          key: bundle-v6-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/**', 'codon-seq/**', 'sequre/**') }}
+
+      - name: Clear old bundle artifacts
+        shell: bash
+        run: |
+          rm -f syqure/bundles/*.tar.zst || true
+          rm -rf codon/install/lib/codon/plugins/sequre || true
 
       - name: Build Codon/Sequre + bundle
         shell: bash
@@ -236,6 +242,11 @@ jobs:
             echo "❌ Bundle not found!"
             exit 1
           fi
+
+      - name: Fingerprint bundle
+        shell: bash
+        run: |
+          sha256sum syqure/bundles/x86_64-unknown-linux-gnu.tar.zst
 
       - name: Smoke test bundle (two-party sum)
         shell: bash
