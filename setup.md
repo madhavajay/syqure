@@ -84,6 +84,19 @@ docker build -f docker/Dockerfile.sequre -t sequre-binary .
 docker run --rm -it sequre-binary ./sequre.sh example/two_party_sum_simple.codon
 ```
 
+## Bundle prebuilt Codon/Sequre (no rebuild)
+
+If you already have a Codon install (e.g., `~/.codon`) and a compiled Sequre plugin,
+create the Rust bundle without rebuilding:
+
+```bash
+CODON_PATH=$HOME/.codon ./bin_libs.sh
+```
+
+Note: the bundle may grow large because it includes LLVM headers to build the Rust C++ bridge.
+If size is a concern, we may prune to only the required LLVM headers, but doing so requires
+tracking the specific header dependencies.
+
 You can override defaults with env vars:
 
 ```bash
