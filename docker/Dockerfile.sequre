@@ -15,7 +15,7 @@ RUN mkdir -p /root/.codon && \
     tar zxvf - -C /root/.codon --strip-components=1
 
 RUN mkdir -p /root/.codon/lib/codon/plugins/sequre/build
-COPY sequre/build/libsequre.so /root/.codon/lib/codon/plugins/sequre/build/libsequre.so
+COPY docker/binaries/libsequre.so /root/.codon/lib/codon/plugins/sequre/build/libsequre.so
 COPY sequre/plugin.toml /root/.codon/lib/codon/plugins/sequre/plugin.toml
 COPY sequre/stdlib /root/.codon/lib/codon/plugins/sequre/stdlib
 
