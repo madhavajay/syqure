@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # Usage: ./sequre.sh path/to/example.codon [-- codon args]
-# Pre-req: CODON_PATH points at your Codon install (defaults to repo codon/install).
+# Pre-req: CODON_PATH points at your Codon install (defaults to ~/.codon).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CODON_PATH_DEFAULT="$SCRIPT_DIR/codon/install"
+CODON_PATH_DEFAULT="$HOME/.codon"
 CODON_PATH="${CODON_PATH:-$CODON_PATH_DEFAULT}"
 
 if [ $# -lt 1 ]; then
