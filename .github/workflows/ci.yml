@@ -15,6 +15,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sequre-linux-binary:
+    name: Sequre Plugin (Linux, prebuilt)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Pin sequre submodule to madhava/gmp-path
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C sequre fetch origin madhava/gmp-path
+          git -C sequre checkout -B madhava/gmp-path origin/madhava/gmp-path
+
+      - name: Restore Codon cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.codon
+          key: codon-${{ runner.os }}-${{ runner.arch }}-0.17.0
+
+      - name: Install runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl \
+            libgmp10
+
+      - name: Install Codon v0.17.0 (if needed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -x "$HOME/.codon/bin/codon" ]; then
+            mkdir -p "$HOME/.codon"
+            curl -L https://github.com/exaloop/codon/releases/download/v0.17.0/codon-$(uname -s | awk '{print tolower($0)}')-$(uname -m).tar.gz | \
+              tar zxvf - -C "$HOME/.codon" --strip-components=1
+          fi
+          echo "$HOME/.codon/bin" >> "$GITHUB_PATH"
+          "$HOME/.codon/bin/codon" --version
+
+      - name: Install prebuilt Sequre plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLUGIN_ROOT="$HOME/.codon/lib/codon/plugins/sequre"
+          mkdir -p "$PLUGIN_ROOT/build"
+          cp docker/binaries/libsequre.so "$PLUGIN_ROOT/build/libsequre.so"
+          cp sequre/plugin.toml "$PLUGIN_ROOT/plugin.toml"
+          rm -rf "$PLUGIN_ROOT/stdlib"
+          cp -R sequre/stdlib "$PLUGIN_ROOT/stdlib"
+
+      - name: Smoke test (codon run)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./sequre.sh example/two_party_sum_simple.codon
+
   bundle-macos-arm:
     name: Build Bundles (macOS arm64)
     runs-on: macos-latest
