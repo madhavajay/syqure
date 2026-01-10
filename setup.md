@@ -75,6 +75,15 @@ Clean them before retrying:
 rm -f ./sock.*
 ```
 
+## Docker (binary-only)
+
+Use the prebuilt Codon v0.17.0 release plus the locally-built Sequre plugin:
+
+```bash
+docker build -f docker/Dockerfile.sequre -t sequre-binary .
+docker run --rm -it sequre-binary ./sequre.sh example/two_party_sum_simple.codon
+```
+
 You can override defaults with env vars:
 
 ```bash
