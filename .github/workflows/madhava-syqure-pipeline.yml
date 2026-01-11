@@ -38,7 +38,7 @@ jobs:
             clang lld cmake ninja-build pkg-config \
             zstd libzstd-dev libedit-dev libxml2-dev \
             python3 python3-venv python3-pip \
-            libsodium-dev
+            libsodium-dev libssl-dev
 
       - name: Resolve provenance and build plan
         id: resolve
