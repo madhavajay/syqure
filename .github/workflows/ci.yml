@@ -78,6 +78,7 @@ jobs:
   bundle-macos-arm:
     name: Build Bundles (macOS arm64)
     runs-on: macos-latest
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code (with submodules)
         uses: actions/checkout@v4
@@ -115,7 +116,7 @@ jobs:
   rust:
     name: Rust Checks
     runs-on: ${{ matrix.os }}
-    if: true
+    if: github.ref == 'refs/heads/main'
     continue-on-error: false
     needs: [bundle-macos-arm]
     strategy:
