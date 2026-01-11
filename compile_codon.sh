@@ -127,7 +127,39 @@ cp -a "$INSTALL_DIR" "${BIN_DIR}/codon"
 # Step 3: Build Jupyter plugin
 echo "=== Building Jupyter Plugin (${BUILD_TYPE}) ==="
 OPENSSL_ROOT_DIR="${OPENSSL_ROOT_DIR:-$(openssl version -d 2>/dev/null | awk -F'\"' '{print $2}')}"
-OPENSSL_CRYPTO_LIBRARY="${OPENSSL_CRYPTO_LIBRARY:-/usr/lib/libssl.so}"
+OPENSSL_CRYPTO_LIBRARY="${OPENSSL_CRYPTO_LIBRARY:-}"
+OPENSSL_SSL_LIBRARY="${OPENSSL_SSL_LIBRARY:-}"
+OPENSSL_INCLUDE_DIR="${OPENSSL_INCLUDE_DIR:-}"
+
+find_lib() {
+    local libname="$1"
+    local search_dirs=(
+        /usr/lib /usr/lib64 /lib /lib64
+        /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
+        /usr/lib/aarch64-linux-gnu /lib/aarch64-linux-gnu
+    )
+    for dir in "${search_dirs[@]}"; do
+        if [ -d "$dir" ]; then
+            local match
+            match=$(ls -1 "$dir"/${libname}.so* 2>/dev/null | head -n 1 || true)
+            if [ -n "$match" ]; then
+                echo "$match"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+if [ -z "$OPENSSL_CRYPTO_LIBRARY" ]; then
+    OPENSSL_CRYPTO_LIBRARY="$(find_lib libcrypto || true)"
+fi
+if [ -z "$OPENSSL_SSL_LIBRARY" ]; then
+    OPENSSL_SSL_LIBRARY="$(find_lib libssl || true)"
+fi
+if [ -z "$OPENSSL_INCLUDE_DIR" ] && [ -f /usr/include/openssl/opensslv.h ]; then
+    OPENSSL_INCLUDE_DIR="/usr/include"
+fi
 LIBUUID_LIBRARY="${LIBUUID_LIBRARY:-}"
 LIBUUID_INCLUDE_DIR="${LIBUUID_INCLUDE_DIR:-}"
 if [ -z "$LIBUUID_LIBRARY" ]; then
@@ -157,8 +189,10 @@ cmake -S jupyter -B jupyter/build -G "$GENERATOR" \
     -DCMAKE_CXX_COMPILER="${CXX:-clang++}" \
     -DLLVM_DIR="$LLVM_DIR" \
     -DCODON_PATH="$INSTALL_DIR" \
-    -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR" \
-    -DOPENSSL_CRYPTO_LIBRARY="$OPENSSL_CRYPTO_LIBRARY" \
+    ${OPENSSL_ROOT_DIR:+-DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"} \
+    ${OPENSSL_CRYPTO_LIBRARY:+-DOPENSSL_CRYPTO_LIBRARY="$OPENSSL_CRYPTO_LIBRARY"} \
+    ${OPENSSL_SSL_LIBRARY:+-DOPENSSL_SSL_LIBRARY="$OPENSSL_SSL_LIBRARY"} \
+    ${OPENSSL_INCLUDE_DIR:+-DOPENSSL_INCLUDE_DIR="$OPENSSL_INCLUDE_DIR"} \
     ${LIBUUID_LIBRARY:+-DLIBUUID_LIBRARY="$LIBUUID_LIBRARY"} \
     ${LIBUUID_INCLUDE_DIR:+-DLIBUUID_INCLUDE_DIR="$LIBUUID_INCLUDE_DIR"}
 cmake --build jupyter/build --config "${BUILD_TYPE}" -j"$CORES"
