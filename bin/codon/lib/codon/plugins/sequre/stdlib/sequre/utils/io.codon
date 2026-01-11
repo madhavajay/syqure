@@ -1,0 +1,128 @@
+from numpy.ndarray import ndarray
+from internal.gc import sizeof
+
+from pickler import dump, load
+
+from C import access(cobj, int) -> int
+
+
+def write_vector[TP](f: File, vector: list, binary: bool):
+    if binary:
+        _C.fwrite(vector.arr.ptr.as_byte(), sizeof(TP), vector.size(), f.fp)
+        f._errcheck("error in write")
+    else:
+        s = ''
+        for i in range(len(vector) - 1):
+            s += f"{vector[i]} "
+        s += f"{vector[-1]}\n"
+        f.write(s)
+
+
+def write_matrix[TP](f: File, mat: list[list], binary: bool):
+    for row in mat: write_vector(f, row, binary, TP=TP)
+
+
+def write_ndarray(f: File, arr: ndarray, binary: bool):
+    if binary:
+        _C.fwrite(arr.data.as_byte(), arr.itemsize, arr.size(), f.fp)
+        f._errcheck("error in write")
+    else:
+        if not arr.ndim:
+            return
+        
+        if staticlen(arr.S) == 1:
+            write_vector(f, arr.tolist(), False, TP=arr.T)
+        else:
+            for sub_tensor in arr:
+                write_ndarray(f, sub_tensor, False)
+                f.write('\n')
+
+
+def read_vector[TP](f: File, length: int, binary: bool) -> list[TP]:
+    if binary:
+        arr = Array[TP](length)
+        for i in range(length): arr[i] = ptr[TP](f.read(sizeof(TP)).ptr.as_byte())[0]
+        return list[TP](arr, length)
+    return [TP(e.strip()) for e in next(f).split()[:length]]
+
+
+def read_matrix[TP](f: File, rows: int, cols: int, binary: bool) -> list[list[TP]]:
+    if binary:
+        return [read_vector(f, cols, binary, TP=TP) for _ in range(rows)]
+    
+    line_count = 0
+    new_matrix = []
+    for line in f:
+        new_matrix.append([TP(e.strip()) for e in line.split()[:cols]])
+        line_count += 1
+
+        if line_count == rows:
+            break
+    
+    if line_count < rows:
+        print(f"IO warning: (matrix read) file contains less rows ({line_count}) than requested ({rows})")
+    
+    return new_matrix
+
+
+def read_ndarray[S, dtype](f: File, shape: S, binary: bool) -> ndarray[S, dtype]:
+    if binary:
+        return ndarray[S, dtype]._new_contig(
+            shape, ptr[dtype](f.read(ndarray._count(shape) * sizeof(dtype)).ptr.as_byte()))
+    
+    raise NotImplementedError("Reading an ndarray from non-binary file is not implemented yet")
+
+
+def read_matrix_start[TP](f: File, rows: int, cols: int, start: int) -> list[list[TP]]:
+    matrix = []
+    for i in range(start + rows):
+        if i >= start:
+            matrix.append(read_vector(f, cols, False, TP=TP))
+    return matrix
+
+
+def reset_files(*files):
+    for file in files:
+        file.seek(0, 0)
+
+
+def log(name, data, path='log.txt', mode='a+', separator='\t'):
+    with open(path, mode) as f:
+        if name:
+            f.write(f'{name}\n')
+        if isinstance(data, list[list]):
+            for row in data:
+                f.write(separator.join([str(e) for e in row]))
+                f.write('\n')
+        elif isinstance(data, list):
+            f.write(separator.join([str(e) for e in data]))
+            f.write('\n')
+        else:
+            f.write(f'{data}\n')
+
+
+def txt_to_bin(input_path: str, output_path: str, rows: int, cols: int, dtype: type):
+    with open(input_path) as fi:
+        m = read_matrix(f=fi, rows=rows, cols=cols, binary=False, TP=dtype)
+        with open(output_path, 'wb') as fo:
+            write_matrix(f=fo, mat=m, binary=True, TP=dtype)
+
+
+def cache_path(name: str, pid: Optional[int] = None) -> str:
+    if pid is None:
+        return f"cache/{name}.gz"
+    return f"cache/{name}_{pid}.gz"
+
+
+def is_cached(name: str, pid: Optional[int] = None) -> bool:
+    return access(cache_path(name, pid).c_str(), 0) == 0
+
+
+def read_cache[dtype](name: str, pid: Optional[int] = None) -> dtype:
+    with gzopen(cache_path(name, pid)) as f:
+        return load(f, T=dtype)
+
+
+def store_cache(data, name: str, pid: Optional[int] = None):
+    with gzopen(cache_path(name, pid), "wb") as f:
+        return dump(data, f)

@@ -1,0 +1,75 @@
+from sequre.constants import SHUT_RDWR
+from sequre.types.utils import core_type_size
+
+from C import listen(int, int) -> int
+from C import accept(int, int, int) -> int
+from C import shutdown(int, int) -> int
+from C import perror(cobj)
+from C import recv(int, cobj, int, int) -> int
+from C import send(int, cobj, int, int) -> int
+from C import close(int) -> int
+from C import memcpy(cobj, cobj, int)
+
+
+def close_socket(sock_fd: int):
+    if sock_fd != -1:
+        shutdown(sock_fd, SHUT_RDWR)
+        close(sock_fd)
+
+
+def listen_socket(sock_fd):
+    rc = listen(sock_fd, 3)
+    if rc == -1:
+        perror(f'Server not listening: {rc}'.c_str())
+        raise ValueError('Server not listening.')
+
+
+def accept_socket(sock_fd):
+    accepted_fd = accept(sock_fd, 0, 0)
+    if accepted_fd == -1:
+        perror(f'Socket could not accept connection'.c_str())
+        raise ValueError('Socket could not accept connection.')
+
+    close_socket(sock_fd)
+    return accepted_fd
+
+
+def snd_jar(sock_fd, jar: Jar, msg_len: int) -> int:
+    totalsent = 0
+
+    while totalsent < msg_len:
+        sent = send(sock_fd, jar + totalsent, msg_len - totalsent, 0)
+        if sent == 0:
+            perror('Send socket connection broken'.c_str())
+            raise ValueError(f'Socket connection broken for msg_len of {msg_len}')
+        totalsent += sent
+    
+    return totalsent    
+
+
+def receive_jar(sock_fd, msg_len: int) -> Jar:
+    bytes_recd = 0
+    buffer = ptr[byte](msg_len)
+
+    while bytes_recd < msg_len:
+        received = recv(sock_fd, buffer + bytes_recd, msg_len - bytes_recd, 0)
+        if received <= 0:
+            perror('Receive socket connection broken'.c_str())
+            raise ValueError(f'Socket connection broken for msg_len of {msg_len - bytes_recd}')
+        bytes_recd += received
+    
+    return buffer
+
+
+# Wrappers
+def send_to_socket(socket, data):
+    fs = core_type_size(data)
+    msg_len = data.size() * fs
+    buffer = ptr[byte](msg_len)
+
+    # TODO: Avoid memcpy by accessing ptr within data directly
+    for i, value in enumerate(data.iter()):
+        p = ptr[byte](__ptr__(value).as_byte())
+        memcpy(buffer + i * fs, p, fs)
+
+    return snd_jar(socket.sock_fd, buffer, msg_len)

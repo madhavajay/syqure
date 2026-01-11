@@ -3,7 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SEQURE_PATH="${SEQURE_PATH:-$ROOT_DIR/sequre}"
-CODON_PATH="${CODON_PATH:-$HOME/.codon}"
+if [[ -z "${CODON_PATH:-}" ]]; then
+  if [[ -d "$ROOT_DIR/bin/codon" ]]; then
+    CODON_PATH="$ROOT_DIR/bin/codon"
+  else
+    CODON_PATH="$HOME/.codon"
+  fi
+fi
 LLVM_PATH="${LLVM_PATH:-$SEQURE_PATH/codon-llvm}"
 SEQ_PATH="${SEQ_PATH:-$SEQURE_PATH/codon-seq}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
@@ -37,7 +43,7 @@ if [[ ! -d "$CODON_PATH/include/codon" || ! -d "$CODON_PATH/lib/codon" ]]; then
 fi
 
 ABI_FLAG=0
-if nm -D "$CODON_PATH/lib/codon/libcodonc.so" 2>/dev/null | rg -q "NE_MAGIC_NAMEB5cxx11"; then
+if rg -q "B5cxx11" <<<"$(nm -D "$CODON_PATH/lib/codon/libcodonc.so" 2>/dev/null)"; then
   ABI_FLAG=1
 fi
 CXX_ABI_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=${ABI_FLAG}"

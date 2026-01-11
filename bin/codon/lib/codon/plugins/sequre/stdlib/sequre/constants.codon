@@ -1,0 +1,244 @@
+import os
+
+from experimental.simd import Vec
+from settings import *
+
+
+# Environment variables
+ENV_CP_IPS: Static[str] = "SEQURE_CP_IPS"
+ENV_NUMBER_OF_PARTIES: Static[str] = "SEQURE_CP_COUNT"
+
+# GMP
+GMP_PATH = "libgmp.so"
+GMP_LIMB_SIZE: Static[int] = 64
+assert LATTISEQ_INT_SIZE % GMP_LIMB_SIZE == 0, f"GMP limb size {GMP_LIMB_SIZE} should be a multiple of Lattiseq big int size {LATTISEQ_INT_SIZE}."
+
+# Types
+mpc_uint = UInt[MPC_INT_SIZE]  # Can be either UInt[128] or UInt[192] at the moment
+
+lattiseq_uint = UInt[LATTISEQ_INT_SIZE]
+lattiseq_int = Int[LATTISEQ_INT_SIZE]
+
+gmp_limb_t = UInt[GMP_LIMB_SIZE]
+
+# MPC
+if MPC_INT_SIZE != 128 and MPC_INT_SIZE != 192 and MPC_INT_SIZE != 256:
+    compile_error("Unsupported integer size selected. Should be either 128, 192, or 256.")
+
+MPC_MODULUS_BITS: Static[int] = 127 if MPC_INT_SIZE == 128 else 174 if MPC_INT_SIZE == 192 else 251
+MPC_MERSENNE_OFFSET: Static[int] = 1 if MPC_INT_SIZE == 128 else 3 if MPC_INT_SIZE == 192 else 9
+MPC_NBIT_K: Static[int] = 40 if MPC_INT_SIZE == 128 else 64
+MPC_NBIT_F: Static[int] = 20 if MPC_INT_SIZE == 128 else 32
+MPC_NBIT_V: Static[int] = 60 if MPC_INT_SIZE == 128 else 64
+MPC_SECOND_FIELD_SIZE: Static[int] = 23 if MPC_INT_SIZE == 128 else 37
+MPC_THIRD_FIELD_SIZE: Static[int] = 13 if MPC_INT_SIZE == 128 else 17
+MPC_SECOND_RING_SIZE: Static[int] = 16
+
+MPC_MODULUS_BYTES: Static[int] = (MPC_MODULUS_BITS + 7) // 8
+MPC_RING_SIZE = mpc_uint(1) << mpc_uint(MPC_MODULUS_BITS)
+MPC_FIELD_SIZE = MPC_RING_SIZE - mpc_uint(MPC_MERSENNE_OFFSET)
+MPC_RING_MASK = MPC_RING_SIZE - mpc_uint(1)
+
+assert MPC_FIELD_SIZE < MPC_RING_SIZE, f"Ring size should be larger than field size. Ring size: {MPC_RING_SIZE}. Field size: {MPC_FIELD_SIZE}."
+assert MPC_RING_SIZE.popcnt() == 1, "Ring size not a power of 2."
+assert MPC_SECOND_FIELD_SIZE < 128, "Second field size must be less than 128"
+assert MPC_THIRD_FIELD_SIZE < 128, "Third field size must be less than 128"
+assert MPC_NBIT_K + MPC_NBIT_F + MPC_NBIT_V < MPC_MODULUS_BITS, "FP config overflows the size of modulus."
+
+# Network
+CP_IPS_STR: str = os.getenv(ENV_CP_IPS)
+CP_IPS: List[str] = CP_IPS_STR.split(",") if CP_IPS_STR else []
+NUMBER_OF_PARTIES: int = int(os.getenv(ENV_NUMBER_OF_PARTIES, default="3"))
+
+if CP_IPS:
+    NUMBER_OF_PARTIES = len(CP_IPS)
+    print(f"Note:\n\t\tThe list of parties IPs is provided (env var {ENV_CP_IPS} is non-empty).\n\t\tSetting the number of parties to the size of env var {ENV_CP_IPS}: {NUMBER_OF_PARTIES}.")
+
+assert NUMBER_OF_PARTIES > 2, "Sequre requires at least 3 computing parties (including trusted dealer) for secure execution."
+assert COMMUNICATION_PORT + (NUMBER_OF_PARTIES - 1) * NUMBER_OF_PARTIES < DATA_SHARING_PORT, f"Not enough ports left between communication port ({COMMUNICATION_PORT}) and data-sharing port ({DATA_SHARING_PORT}) to support all connections between parties."
+
+AF_UNIX = 1
+AF_INET = 2
+SOCK_STREAM = 1
+SHUT_RDWR = 2
+
+AF_UNIX_PREFIX = "./sock."
+
+# Algorithms
+MATMUL_LEAF_SIZE: Static[int] = 64
+CHEBYSHEV_DEGREE: Static[int] = 8
+
+# Access patterns
+ENC_ROW: str = "row-wise"
+ENC_COL: str = "col-wise"
+ENC_DIAG: str = "diag-wise"
+
+# SIMD
+SIMD_LANE_SIZE: Static[int] = 8
+_MM_0F_u128xN: Vec[u128, SIMD_LANE_SIZE] = Vec[u64, SIMD_LANE_SIZE](u64(0xffffffffffffffff)).zext_double()
+
+# Masks
+MASK32: Static[int] = 0xffffffff
+
+# IEEE 754 2008 FP standardization
+IEEE_754_MANTISSA_SIZE: Static[int] = 52
+IEEE_754_EXPONENT_SIZE: Static[int] = 64 - IEEE_754_MANTISSA_SIZE - 1
+IEEE_754_EXPONENT_HALF_RANGE: int = (1 << (IEEE_754_EXPONENT_SIZE - 1)) - 1
+
+# Parallelism
+NUM_THREADS: Static[int] = 4
+
+# Lattiseq
+LATTISEQ_MAX_LOGN: Static[int] = 17
+LATTISEQ_MIN_LOGN: Static[int] = 4
+LATTISEQ_MAX_MODULI_COUNT: Static[int] = 34
+LATTISEQ_DEFAULT_SIGMA: float = 3.2
+LATTISEQ_SIGMA_SMUDGE: float = float(1048576)
+LATTISEQ_MAX_MODULI_SIZE: Static[int] = 60
+LATTISEQ_GALOIS_GEN: Static[int] = 5
+LATTISEQ_MIN_LOG_SLOTS: Static[int] = 0
+LATTISEQ_STANDARD_RING_ENUM = 0
+LATTISEQ_CONJUGATE_INVARIANT_RING_ENUM = 1
+LATTISEQ_ROTATION_KEYS_COUNT: Static[int] = 64
+
+# HE
+HE_ADD_COST_ESTIMATE: float = 0.0003027
+HE_MUL_COST_ESTIMATE: float = 0.0014253
+HE_MUL_RELIN_COST_ESTIMATE: float = 0.0344197
+HE_ROT_COST_ESTIMATE: float = 0.0328543
+HE_ENCODING_COST_ESTIMATE: float = 0.0047469
+HE_ENCRYPTION_COST_ESTIMATE: float = 0.0056820
+HE_DECODING_COST_ESTIMATE: float = 0.0385771
+HE_DECRYPTION_COST_ESTIMATE: float = 0.0006543
+HE_ENC_COST_ESTIMATE: float = HE_ENCODING_COST_ESTIMATE + HE_ENCRYPTION_COST_ESTIMATE
+HE_DEC_COST_ESTIMATE: float = HE_DECODING_COST_ESTIMATE + HE_DECRYPTION_COST_ESTIMATE
+
+# SMC
+MPC_BIG_INT_MUL_COST: float = 2.9805e-05
+
+# MHE
+MHE_MUL_TO_ADD_THRESHOLD: Static[int] = 7
+MHE_MPC_SWITCH_COST_ESTIMATE: float = HE_ENC_COST_ESTIMATE + HE_DEC_COST_ESTIMATE
+
+# Instruction cost estimates
+SMALL_CYCLES_INSTR_COST_ESTIMATE: float = 1e-09
+
+# Run-script flags/toggles
+@tuple
+class _RUN_TOGGLES:
+    RUN_ALL_FLAG: str = "--all"
+    UNIT_TEST_FLAG: str = "--unit"
+    E2E_TEST_FLAG: str = "--e2e"
+
+    HELPERS_TEST_FLAG: str = "--helpers"
+    PRIMITIVES_TEST_FLAG: str = "--primitives"
+    HE_TEST_FLAG: str = "--he"
+    MPC_TEST_FLAG: str = "--mpc"
+    SHARETENSOR_TEST_FLAG: str = "--sharetensor"
+    CIPHERTENSOR_TEST_FLAG: str = "--ciphertensor"
+    MPP_TEST_FLAG: str = "--mpp"
+    MPA_TEST_FLAG: str = "--mpa"
+    MPU_TEST_FLAG: str = "--mpu"
+    IR_PASSES_TEST_FLAG: str = "--ir-passes"
+    STDLIB_BUILTIN_TEST_FLAG: str = "--stdlib-builtin"
+
+    LATTISEQ_FLAG: str = "--lattiseq"
+    LATTISEQ_MULT3_FLAG: str = "--lattiseq-mult3"
+    MHE_FLAG: str = "--mhe"
+    LIN_ALG_FLAG: str = "--lin-alg"
+    LIN_REG_FLAG: str = "--lin-reg"
+    LOG_REG_FLAG: str = "--log-reg"
+    LSVM_FLAG: str = "--lsvm"
+    NN_FLAG: str = "--neural-net"
+    MI_FLAG: str = "--mi"
+    PCA_FLAG: str = "--pca"
+    KING_FLAG: str = "--king"
+    CREDIT_SCORE_FLAG: str = "--credit-score"
+    GWAS_FLAG: str = "--gwas"
+    GWAS_W_NORM_FLAG: str = "--gwas-with-norm"
+    GWAS_WO_NORM_FLAG: str = "--gwas-without-norm"
+    DTI_FLAG: str = "--dti"
+    OPAL_FLAG: str = "--opal"
+    GANON_FLAG: str = "--ganon"
+    GENOTYPE_IMPUTATION_FLAG: str = "--genotype-imputation"
+    MNIST_FLAG: str = "--mnist"
+    ABLATIONS_FLAG: str = "--ablation"
+
+    MHE_SETUP_SKIP_FLAG: str = "--skip-mhe-setup"
+    USE_RING_FLAG: str = "--use-ring"
+    LOCAL_SETUP_FLAG: str = "--local"
+
+    def __init__(self):
+        self._check_validity()
+    
+    def _check_validity(self):
+        assert len(list(self)) == len(set(self)), "All flags in _RUN_TOGGLES should be different"
+
+RUN_TOGGLES = _RUN_TOGGLES()
+
+# Linear algebra
+EIGEN_DECOMP_ITER_PER_EVAL: Static[int] = 5
+
+# Statistics
+UNIFORM_DISTRIBUTION: Static[str] = "uniform"
+NORMAL_DISTRIBUTION: Static[str] = "normal"
+ZEROS_DISTRIBUTION: Static[str] = "zeros"
+ONES_DISTRIBUTION: Static[str] = "ones"
+
+# Multiple imputation
+MI_BATCHED_MODE: Static[str] = "batched"
+MI_STOCHASTIC_MODE: Static[str] = "stochastic"
+
+# Neural nets
+
+## Activations
+RELU_ACTIVATION: Static[str] = "relu"
+LINEAR_ACTIVATION: Static[str] = "linear"
+
+## Losses
+HINGE_LOSS: Static[str] = "hinge"
+
+## Optimizers
+BGD_OPTIMIZER: Static[str] = "bgd"
+MBGD_OPTIMIZER: Static[str] = "mbgd"
+
+## Metrics
+LOSS_METRIC: Static[str] = "loss"
+
+## Initializers
+UNIFORM_INITIALIZER: Static[str] = UNIFORM_DISTRIBUTION
+NORMAL_INITIALIZER: Static[str] = NORMAL_DISTRIBUTION
+ZEROS_INITIALIZER: Static[str] = ZEROS_DISTRIBUTION
+ONES_INITIALIZER: Static[str] = ONES_DISTRIBUTION
+
+## Supported methods
+SUPPORTED_ACTIVATIONS = [
+    RELU_ACTIVATION,
+    LINEAR_ACTIVATION
+]
+SUPPORTED_LOSSES = [
+    HINGE_LOSS
+]
+SUPPORTED_OPTIMIZERS = [
+    BGD_OPTIMIZER,
+    MBGD_OPTIMIZER
+]
+SUPPORTED_METRICS = [
+    LOSS_METRIC
+]
+SUPPORTED_INITIALIZERS = [
+    UNIFORM_INITIALIZER,
+    NORMAL_INITIALIZER,
+    ZEROS_INITIALIZER,
+    ONES_INITIALIZER
+]
+
+# IR optimizations
+IR_OPT_ENCODING_OPT_NAME_BRUTE_FORCE: Static[str] = "brute-force"
+IR_OPT_ENCODING_BRUTE_FORCE_MAX_MATMUL_COUNT: Static[int] = 10
+IR_OPT_ENCODING_ROW_WISE_ENUM: Static[int] = 1
+IR_OPT_ENCODING_COL_WISE_ENUM: Static[int] = 2
+IR_OPT_ENCODING_DIAG_WISE_ENUM: Static[int] = 3
+assert IR_OPT_ENCODING_ROW_WISE_ENUM == 1, "IR_OPT_ENCODING_ROW_WISE_ENUM must be equal to 1"
+assert IR_OPT_ENCODING_COL_WISE_ENUM == 2, "IR_OPT_ENCODING_COL_WISE_ENUM must be equal to 2"
+assert IR_OPT_ENCODING_DIAG_WISE_ENUM == 3, "IR_OPT_ENCODING_DIAG_WISE_ENUM must be equal to 3"

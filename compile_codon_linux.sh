@@ -5,10 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Configuration (override by exporting CODON_DIR/LLVM_OVERRIDE/BUILD_TYPE)
 CODON_DIR="${CODON_DIR:-$SCRIPT_DIR/codon}"
 INSTALL_DIR="$CODON_DIR/install"
+BIN_DIR="${BIN_DIR:-$SCRIPT_DIR/bin}"
 LLVM_OVERRIDE="${LLVM_OVERRIDE:-}"
 LLVM_BRANCH="${LLVM_BRANCH:-codon-17.0.6}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 LLVM_TARGETS="${LLVM_TARGETS:-X86}"
+LLVM_BUILD_DYLIB="ON"
 CLEAN=0
 CLEAN_ALL=0
 OPENMP_FLAG="${CODON_ENABLE_OPENMP:-ON}"
@@ -52,13 +54,25 @@ fi
 cd "$CODON_DIR"
 
 # Step 1: Choose or build LLVM (Codon's fork)
+REBUILD_LLVM=0
 if [ -n "$LLVM_OVERRIDE" ] && [ -d "$LLVM_OVERRIDE" ]; then
     LLVM_DIR="$LLVM_OVERRIDE"
     echo "=== Using LLVM override at $LLVM_DIR ==="
 elif [ -d "$CODON_DIR/llvm-project/install/lib/cmake/llvm" ]; then
-    LLVM_DIR="$CODON_DIR/llvm-project/install/lib/cmake/llvm"
-    echo "=== LLVM already built, using $LLVM_DIR ==="
+    if [ "$LLVM_BUILD_DYLIB" = "ON" ] && ! ls "$CODON_DIR/llvm-project/install/lib"/libLLVM*.so* >/dev/null 2>&1; then
+        echo "=== LLVM install missing libLLVM.so; rebuilding with LLVM_BUILD_DYLIB=ON ==="
+        rm -rf "$CODON_DIR/llvm-project/build"
+        rm -rf "$CODON_DIR/llvm-project/install"
+        REBUILD_LLVM=1
+    else
+        LLVM_DIR="$CODON_DIR/llvm-project/install/lib/cmake/llvm"
+        echo "=== LLVM already built, using $LLVM_DIR ==="
+    fi
 else
+    REBUILD_LLVM=1
+fi
+
+if [ "$REBUILD_LLVM" -eq 1 ]; then
     echo "=== Building LLVM from source (this takes 30-60 min) ==="
     if [ ! -d "llvm-project/.git" ]; then
         rm -rf llvm-project
@@ -91,7 +105,11 @@ else
         -DLLVM_ENABLE_RTTI=ON \
         -DLLVM_ENABLE_ZLIB=OFF \
         -DLLVM_ENABLE_TERMINFO=OFF \
-        -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGETS"
+        -DLLVM_BUILD_LLVM_DYLIB="$LLVM_BUILD_DYLIB" \
+        -DLLVM_LINK_LLVM_DYLIB="$LLVM_BUILD_DYLIB" \
+        -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGETS" \
+        -DCMAKE_C_COMPILER="${CC:-clang}" \
+        -DCMAKE_CXX_COMPILER="${CXX:-clang++}"
     cmake --build llvm-project/build -j"$CORES"
     cmake --install llvm-project/build --prefix=llvm-project/install
     LLVM_DIR="$CODON_DIR/llvm-project/install/lib/cmake/llvm"
@@ -110,11 +128,18 @@ cmake -S . -B build -G "$GENERATOR" \
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DLLVM_DIR="$LLVM_DIR" \
+    -DLLVM_LINK_LLVM_DYLIB="$LLVM_BUILD_DYLIB" \
     -DCODON_ENABLE_OPENMP="${OPENMP_FLAG}" \
     -DCMAKE_C_COMPILER="${CC:-clang}" \
     -DCMAKE_CXX_COMPILER="${CXX:-clang++}"
 cmake --build build --config "${BUILD_TYPE}" -j"$CORES"
 cmake --install build --prefix="$INSTALL_DIR"
+
+# Step 2.5: Copy install into repo-local bin (isolated from ~/.codon)
+echo "=== Copying Codon install to ${BIN_DIR}/codon ==="
+rm -rf "${BIN_DIR}/codon"
+mkdir -p "$BIN_DIR"
+cp -a "$INSTALL_DIR" "${BIN_DIR}/codon"
 
 # Step 3: Build Jupyter plugin
 echo "=== Building Jupyter Plugin (${BUILD_TYPE}) ==="

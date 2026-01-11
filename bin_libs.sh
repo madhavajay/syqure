@@ -39,9 +39,20 @@ if [ -d "$CODON_PATH/include" ]; then
   cp -R "$CODON_PATH/include/." "$DIST_DIR/include/"
 fi
 
-# Also include LLVM headers if available (needed for the Rust C++ bridge).
+# Bundle LLVM shared library from Codon's build if available.
+LLVM_LIBDIR="$ROOT_DIR/codon/llvm-project/install/lib"
+if [ -d "$LLVM_LIBDIR" ]; then
+  if ls "$LLVM_LIBDIR"/libLLVM*.so* >/dev/null 2>&1; then
+    mkdir -p "$DIST_DIR/lib/llvm"
+    cp -P "$LLVM_LIBDIR"/libLLVM*.so* "$DIST_DIR/lib/llvm/" 2>/dev/null || true
+  fi
+fi
+
+# Include LLVM headers if available (needed for the Rust C++ bridge).
 LLVM_INC=""
-if [ -d "$ROOT_DIR/external/llvm-project/llvm/include" ]; then
+if [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]; then
+  LLVM_INC="$ROOT_DIR/codon/llvm-project/install/include"
+elif [ -d "$ROOT_DIR/external/llvm-project/llvm/include" ]; then
   LLVM_INC="$ROOT_DIR/external/llvm-project/llvm/include"
 elif command -v llvm-config >/dev/null 2>&1; then
   LLVM_INC="$(llvm-config --includedir)"
@@ -49,6 +60,22 @@ fi
 if [ -n "$LLVM_INC" ] && [ -d "$LLVM_INC" ]; then
   mkdir -p "$DIST_DIR/include"
   cp -R "$LLVM_INC/." "$DIST_DIR/include/"
+fi
+
+# Generate required LLVM .inc files when using source headers (no build tree).
+if [ "$LLVM_INC" = "$ROOT_DIR/external/llvm-project/llvm/include" ]; then
+  LLVM_TBLGEN="${LLVM_TBLGEN:-llvm-tblgen}"
+  if ! command -v "$LLVM_TBLGEN" >/dev/null 2>&1; then
+    echo "llvm-tblgen not found; install LLVM to generate required headers." >&2
+    exit 1
+  fi
+  LLVM_IR_SRC="$ROOT_DIR/external/llvm-project/llvm/include/llvm/IR"
+  LLVM_IR_DST="$DIST_DIR/include/llvm/IR"
+  mkdir -p "$LLVM_IR_DST"
+  "$LLVM_TBLGEN" -gen-attrs -I "$ROOT_DIR/external/llvm-project/llvm/include" \
+    -o "$LLVM_IR_DST/Attributes.inc" "$LLVM_IR_SRC/Attributes.td"
+  "$LLVM_TBLGEN" -gen-intrinsic-enums -I "$ROOT_DIR/external/llvm-project/llvm/include" \
+    -o "$LLVM_IR_DST/IntrinsicEnums.inc" "$LLVM_IR_SRC/Intrinsics.td"
 fi
 
 # Create a per-target bundle

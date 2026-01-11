@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Configuration (override by exporting CODON_DIR/LLVM_OVERRIDE/BUILD_TYPE)
 CODON_DIR="${CODON_DIR:-$SCRIPT_DIR/codon}"
 INSTALL_DIR="$CODON_DIR/install"
+BIN_DIR="${BIN_DIR:-$SCRIPT_DIR/bin}"
 LLVM_OVERRIDE="${LLVM_OVERRIDE:-}"
 LLVM_BRANCH="${LLVM_BRANCH:-codon-17.0.6}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
@@ -116,6 +117,12 @@ cmake -S . -B build -G "$GENERATOR" \
     -DCMAKE_CXX_COMPILER="${CXX:-clang++}"
 cmake --build build --config "${BUILD_TYPE}" -j"$CORES"
 cmake --install build --prefix="$INSTALL_DIR"
+
+# Step 2.5: Copy install into repo-local bin (isolated from ~/.codon)
+echo "=== Copying Codon install to ${BIN_DIR}/codon ==="
+rm -rf "${BIN_DIR}/codon"
+mkdir -p "$BIN_DIR"
+cp -a "$INSTALL_DIR" "${BIN_DIR}/codon"
 
 # Step 3: Build Jupyter plugin
 echo "=== Building Jupyter Plugin (${BUILD_TYPE}) ==="
