@@ -1,0 +1,233 @@
+name: Syqure Multistage (linux-x86_64)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - madhava/syqure
+    paths-ignore:
+      - "ci/artifacts.json"
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: syqure-linux-x86_64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-linux-x86_64:
+    runs-on: ubuntu-22.04
+    env:
+      PLATFORM: linux-x86_64
+      CODON_ARTIFACT_DIR: ci/_artifacts/codon
+      SEQURE_ARTIFACT_DIR: ci/_artifacts/sequre
+      SYQURE_ARTIFACT_DIR: ci/_artifacts/syqure
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld cmake ninja-build pkg-config \
+            zstd libzstd-dev libedit-dev libxml2-dev \
+            python3 python3-venv python3-pip
+
+      - name: Resolve provenance and build plan
+        id: resolve
+        run: |
+          set -euo pipefail
+          CODON_SHA="$(git -C codon rev-parse HEAD)"
+          SEQURE_SHA="$(git -C sequre rev-parse HEAD)"
+          SYQURE_SHA="$(git rev-parse HEAD)"
+          echo "codon_sha=$CODON_SHA" >> "$GITHUB_OUTPUT"
+          echo "sequre_sha=$SEQURE_SHA" >> "$GITHUB_OUTPUT"
+          echo "syqure_sha=$SYQURE_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ -f ci/artifacts.json ]; then
+            CODON_PREV_SHA="$(jq -r '.["linux-x86_64"].codon.sha // empty' ci/artifacts.json)"
+            SEQURE_PREV_SHA="$(jq -r '.["linux-x86_64"].sequre.sha // empty' ci/artifacts.json)"
+            SYQURE_PREV_SHA="$(jq -r '.["linux-x86_64"].syqure.sha // empty' ci/artifacts.json)"
+            CODON_RUN_ID="$(jq -r '.["linux-x86_64"].codon.run_id // empty' ci/artifacts.json)"
+            SEQURE_RUN_ID="$(jq -r '.["linux-x86_64"].sequre.run_id // empty' ci/artifacts.json)"
+            SYQURE_RUN_ID="$(jq -r '.["linux-x86_64"].syqure.run_id // empty' ci/artifacts.json)"
+            CODON_ARTIFACT="$(jq -r '.["linux-x86_64"].codon.artifact // empty' ci/artifacts.json)"
+            SEQURE_ARTIFACT="$(jq -r '.["linux-x86_64"].sequre.artifact // empty' ci/artifacts.json)"
+            SYQURE_ARTIFACT="$(jq -r '.["linux-x86_64"].syqure.artifact // empty' ci/artifacts.json)"
+          else
+            CODON_PREV_SHA=""
+            SEQURE_PREV_SHA=""
+            SYQURE_PREV_SHA=""
+            CODON_RUN_ID=""
+            SEQURE_RUN_ID=""
+            SYQURE_RUN_ID=""
+            CODON_ARTIFACT=""
+            SEQURE_ARTIFACT=""
+            SYQURE_ARTIFACT=""
+          fi
+
+          CODON_NEEDS_BUILD="false"
+          SEQURE_NEEDS_BUILD="false"
+          SYQURE_NEEDS_BUILD="false"
+
+          if [ "$CODON_PREV_SHA" != "$CODON_SHA" ] || [ -z "$CODON_RUN_ID" ] || [ -z "$CODON_ARTIFACT" ]; then
+            CODON_NEEDS_BUILD="true"
+          fi
+          if [ "$SEQURE_PREV_SHA" != "$SEQURE_SHA" ] || [ -z "$SEQURE_RUN_ID" ] || [ -z "$SEQURE_ARTIFACT" ] || [ "$CODON_NEEDS_BUILD" = "true" ]; then
+            SEQURE_NEEDS_BUILD="true"
+          fi
+          if [ "$SYQURE_PREV_SHA" != "$SYQURE_SHA" ] || [ -z "$SYQURE_RUN_ID" ] || [ -z "$SYQURE_ARTIFACT" ] || [ "$SEQURE_NEEDS_BUILD" = "true" ]; then
+            SYQURE_NEEDS_BUILD="true"
+          fi
+
+          echo "codon_needs_build=$CODON_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "sequre_needs_build=$SEQURE_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "syqure_needs_build=$SYQURE_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "codon_run_id=$CODON_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "sequre_run_id=$SEQURE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "syqure_run_id=$SYQURE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "codon_artifact=$CODON_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "sequre_artifact=$SEQURE_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "syqure_artifact=$SYQURE_ARTIFACT" >> "$GITHUB_OUTPUT"
+
+      - name: Build Codon (if needed)
+        if: steps.resolve.outputs.codon_needs_build == 'true'
+        run: |
+          export CODON_ENABLE_OPENMP=OFF
+          ./compile_codon_linux.sh
+          mkdir -p "$CODON_ARTIFACT_DIR"
+          tar -C bin -c codon | zstd -19 -o "$CODON_ARTIFACT_DIR/codon-${PLATFORM}-${{ steps.resolve.outputs.codon_sha }}.tar.zst"
+
+      - name: Upload Codon artifact
+        if: steps.resolve.outputs.codon_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}
+          path: ${{ env.CODON_ARTIFACT_DIR }}/codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}.tar.zst
+          retention-days: 30
+
+      - name: Download Codon artifact (cached)
+        if: steps.resolve.outputs.codon_needs_build != 'true'
+        run: |
+          mkdir -p "$CODON_ARTIFACT_DIR"
+          gh run download "${{ steps.resolve.outputs.codon_run_id }}" -n "${{ steps.resolve.outputs.codon_artifact }}" -D "$CODON_ARTIFACT_DIR"
+
+      - name: Extract Codon artifact
+        run: |
+          CODON_TAR="$(ls "$CODON_ARTIFACT_DIR"/codon-${PLATFORM}-*.tar.zst | head -n 1)"
+          mkdir -p "$CODON_ARTIFACT_DIR/extract"
+          zstd -dc "$CODON_TAR" | tar -C "$CODON_ARTIFACT_DIR/extract" -xf -
+          echo "CODON_PATH=$CODON_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
+
+      - name: Build Sequre (if needed)
+        if: steps.resolve.outputs.sequre_needs_build == 'true'
+        run: |
+          CODON_PATH="$CODON_PATH" ./compile_sequre.sh
+          mkdir -p "$SEQURE_ARTIFACT_DIR"
+          tar -C "$(dirname "$CODON_PATH")" -c "$(basename "$CODON_PATH")" | zstd -19 -o "$SEQURE_ARTIFACT_DIR/sequre-${PLATFORM}-${{ steps.resolve.outputs.sequre_sha }}.tar.zst"
+
+      - name: Upload Sequre artifact
+        if: steps.resolve.outputs.sequre_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}
+          path: ${{ env.SEQURE_ARTIFACT_DIR }}/sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}.tar.zst
+          retention-days: 30
+
+      - name: Download Sequre artifact (cached)
+        if: steps.resolve.outputs.sequre_needs_build != 'true'
+        run: |
+          mkdir -p "$SEQURE_ARTIFACT_DIR"
+          gh run download "${{ steps.resolve.outputs.sequre_run_id }}" -n "${{ steps.resolve.outputs.sequre_artifact }}" -D "$SEQURE_ARTIFACT_DIR"
+
+      - name: Extract Sequre artifact
+        run: |
+          SEQURE_TAR="$(ls "$SEQURE_ARTIFACT_DIR"/sequre-${PLATFORM}-*.tar.zst | head -n 1)"
+          mkdir -p "$SEQURE_ARTIFACT_DIR/extract"
+          zstd -dc "$SEQURE_TAR" | tar -C "$SEQURE_ARTIFACT_DIR/extract" -xf -
+          echo "CODON_PATH=$SEQURE_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
+
+      - name: Build Syqure (if needed)
+        if: steps.resolve.outputs.syqure_needs_build == 'true'
+        run: |
+          unset SYQURE_LINK_LLVM_SHARED SYQURE_LINK_LLVM_STATIC
+          cargo build -p syqure
+          CODON_PATH="$CODON_PATH" ./bin_libs.sh
+          mkdir -p "$SYQURE_ARTIFACT_DIR"
+          tar -C . -c \
+            target/debug/syqure \
+            syqure/bundles/*.tar.zst | zstd -19 -o "$SYQURE_ARTIFACT_DIR/syqure-${PLATFORM}-${{ steps.resolve.outputs.syqure_sha }}.tar.zst"
+
+      - name: Upload Syqure artifact
+        if: steps.resolve.outputs.syqure_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}
+          path: ${{ env.SYQURE_ARTIFACT_DIR }}/syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}.tar.zst
+          retention-days: 30
+
+      - name: Download Syqure artifact (cached)
+        if: steps.resolve.outputs.syqure_needs_build != 'true'
+        run: |
+          mkdir -p "$SYQURE_ARTIFACT_DIR"
+          gh run download "${{ steps.resolve.outputs.syqure_run_id }}" -n "${{ steps.resolve.outputs.syqure_artifact }}" -D "$SYQURE_ARTIFACT_DIR"
+
+      - name: Smoke test
+        run: |
+          SYQURE_TAR="$(ls "$SYQURE_ARTIFACT_DIR"/syqure-${PLATFORM}-*.tar.zst | head -n 1)"
+          mkdir -p "$SYQURE_ARTIFACT_DIR/extract"
+          zstd -dc "$SYQURE_TAR" | tar -C "$SYQURE_ARTIFACT_DIR/extract" -xf -
+          export SYQURE_BUNDLE_FILE="$SYQURE_ARTIFACT_DIR/extract/syqure/bundles/$(rustc -vV | awk '/host:/{print $2}').tar.zst"
+          export SYQURE_BUNDLE_CACHE="$SYQURE_ARTIFACT_DIR/extract/target/syqure-cache"
+          rm -rf "$SYQURE_BUNDLE_CACHE"
+          "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" example/two_party_sum_simple.codon
+
+      - name: Update provenance file
+        if: steps.resolve.outputs.syqure_needs_build == 'true'
+        run: |
+          set -euo pipefail
+          CODON_ARTIFACT="codon-${PLATFORM}-${{ steps.resolve.outputs.codon_sha }}"
+          SEQURE_ARTIFACT="sequre-${PLATFORM}-${{ steps.resolve.outputs.sequre_sha }}"
+          SYQURE_ARTIFACT="syqure-${PLATFORM}-${{ steps.resolve.outputs.syqure_sha }}"
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("ci/artifacts.json")
+          data = {"linux-x86_64": {"codon": None, "sequre": None, "syqure": None}}
+          if path.exists():
+              data = json.loads(path.read_text())
+          plat = data.setdefault("linux-x86_64", {})
+          plat["codon"] = {
+              "sha": "${{ steps.resolve.outputs.codon_sha }}",
+              "run_id": "${{ github.run_id }}",
+              "artifact": "codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}",
+          }
+          plat["sequre"] = {
+              "sha": "${{ steps.resolve.outputs.sequre_sha }}",
+              "run_id": "${{ github.run_id }}",
+              "artifact": "sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}",
+          }
+          plat["syqure"] = {
+              "sha": "${{ steps.resolve.outputs.syqure_sha }}",
+              "run_id": "${{ github.run_id }}",
+              "artifact": "syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}",
+          }
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+          PY
+
+      - name: Commit provenance
+        if: steps.resolve.outputs.syqure_needs_build == 'true'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add ci/artifacts.json
+          git commit -m "ci: record linux-x86_64 artifacts [skip ci]" || exit 0
+          git push
