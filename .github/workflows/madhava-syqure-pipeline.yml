@@ -71,6 +71,7 @@ jobs:
             -DCODON_PATH="$CODON_PATH" \
             -DCODON_SOURCE_DIR="$(pwd)/codon" \
             -DLLVM_DIR="$LLVM_DIR" \
+            -DCMAKE_CXX_FLAGS="-I$(pwd)/compat" \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++
 
