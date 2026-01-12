@@ -1,4 +1,5 @@
-from sequre.constants import SHUT_RDWR
+from sequre.constants import SHUT_RDWR, FILE_TRANSPORT
+from sequre.network.file_transport import receive_file, send_file
 from sequre.types.utils import core_type_size
 
 from C import listen(int, int) -> int
@@ -12,6 +13,8 @@ from C import memcpy(cobj, cobj, int)
 
 
 def close_socket(sock_fd: int):
+    if FILE_TRANSPORT:
+        return
     if sock_fd != -1:
         shutdown(sock_fd, SHUT_RDWR)
         close(sock_fd)
@@ -35,6 +38,8 @@ def accept_socket(sock_fd):
 
 
 def snd_jar(sock_fd, jar: Jar, msg_len: int) -> int:
+    if FILE_TRANSPORT:
+        return send_file(sock_fd, jar, msg_len)
     totalsent = 0
 
     while totalsent < msg_len:
@@ -48,6 +53,8 @@ def snd_jar(sock_fd, jar: Jar, msg_len: int) -> int:
 
 
 def receive_jar(sock_fd, msg_len: int) -> Jar:
+    if FILE_TRANSPORT:
+        return receive_file(sock_fd, msg_len)
     bytes_recd = 0
     buffer = ptr[byte](msg_len)
 
