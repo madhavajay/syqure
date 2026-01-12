@@ -61,6 +61,8 @@ CXX_ABI_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=${ABI_FLAG}"
 if [[ -d "$ROOT_DIR/compat" ]]; then
   CXX_ABI_FLAGS+=" -I$ROOT_DIR/compat"
 fi
+# Ensure fmt::ostream_formatter is available even when fmt/format.h is used alone.
+CXX_ABI_FLAGS+=" -include fmt/ostream.h"
 echo "  ABI_FLAG=$ABI_FLAG"
 
 if [[ ! -d "$SEQURE_PATH" ]]; then
