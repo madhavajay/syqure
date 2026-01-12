@@ -223,8 +223,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ -d "${CODON_LLVM_DIR}/install/lib/cmake/llvm" ]; then
-            echo "Using cached Codon LLVM at ${CODON_LLVM_DIR}"
-            exit 0
+            if ls "${CODON_LLVM_DIR}/install/lib"/libLLVM*.so* >/dev/null 2>&1; then
+              echo "Using cached Codon LLVM at ${CODON_LLVM_DIR}"
+              exit 0
+            fi
+            echo "Cached LLVM missing libLLVM.so; rebuilding with LLVM_BUILD_LLVM_DYLIB=ON"
           fi
           rm -rf "${CODON_LLVM_DIR}"
           git clone --depth 1 -b codon https://github.com/exaloop/llvm-project "${CODON_LLVM_DIR}"
@@ -234,6 +237,8 @@ jobs:
             -DLLVM_ENABLE_RTTI=ON \
             -DLLVM_ENABLE_ZLIB=OFF \
             -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_BUILD_LLVM_DYLIB=ON \
+            -DLLVM_LINK_LLVM_DYLIB=ON \
             -DLLVM_TARGETS_TO_BUILD=all \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++
