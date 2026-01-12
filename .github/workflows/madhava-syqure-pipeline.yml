@@ -203,7 +203,8 @@ jobs:
           echo "CODON_PATH=$CODON_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
 
       - name: Restore Codon LLVM cache
-        uses: actions/cache@v4
+        id: llvm-cache
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.CODON_LLVM_DIR }}
           key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
@@ -238,6 +239,13 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++
           cmake --build "${CODON_LLVM_DIR}/build"
           cmake --install "${CODON_LLVM_DIR}/build" --prefix "${CODON_LLVM_DIR}/install"
+
+      - name: Save Codon LLVM cache
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CODON_LLVM_DIR }}
+          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
 
       - name: Upload Codon LLVM artifact
         if: steps.resolve.outputs.llvm_needs_build == 'true'
