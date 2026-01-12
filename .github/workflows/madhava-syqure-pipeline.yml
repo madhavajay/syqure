@@ -287,7 +287,8 @@ jobs:
       - name: Build Syqure (if needed)
         if: steps.resolve.outputs.syqure_needs_build == 'true'
         run: |
-          unset SYQURE_LINK_LLVM_SHARED SYQURE_LINK_LLVM_STATIC
+          export SYQURE_LINK_LLVM_SHARED=1
+          unset SYQURE_LINK_LLVM_STATIC
           CODON_PATH="$CODON_PATH" ./bin_libs.sh
           export SYQURE_BUNDLE_FILE="$(pwd)/syqure/bundles/$(rustc -vV | awk '/host:/{print $2}').tar.zst"
           cargo build -p syqure
