@@ -39,6 +39,7 @@ jobs:
             clang lld cmake ninja-build pkg-config \
             zstd libzstd-dev libedit-dev libxml2-dev \
             python3 python3-venv python3-pip \
+            libfmt-dev \
             libsodium-dev libssl-dev
 
       - name: Resolve provenance and build plan
@@ -136,6 +137,27 @@ jobs:
           key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
           restore-keys: |
             codon-llvm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build Codon LLVM (cached)
+        run: |
+          set -euo pipefail
+          if [ -d "${CODON_LLVM_DIR}/install/lib/cmake/llvm" ]; then
+            echo "Using cached Codon LLVM at ${CODON_LLVM_DIR}"
+            exit 0
+          fi
+          rm -rf "${CODON_LLVM_DIR}"
+          git clone --depth 1 -b codon https://github.com/exaloop/llvm-project "${CODON_LLVM_DIR}"
+          cmake -S "${CODON_LLVM_DIR}/llvm" -B "${CODON_LLVM_DIR}/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_ENABLE_RTTI=ON \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_TARGETS_TO_BUILD=all \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build "${CODON_LLVM_DIR}/build"
+          cmake --install "${CODON_LLVM_DIR}/build" --prefix "${CODON_LLVM_DIR}/install"
 
       - name: Build Sequre (if needed)
         if: steps.resolve.outputs.sequre_needs_build == 'true'
