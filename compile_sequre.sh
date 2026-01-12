@@ -11,8 +11,8 @@ if [[ -z "${CODON_PATH:-}" ]]; then
   fi
 fi
 CODON_SOURCE_DIR="${CODON_SOURCE_DIR:-}"
-if [[ -z "$CODON_SOURCE_DIR" && -d "$ROOT_DIR/codon/codon" ]]; then
-  CODON_SOURCE_DIR="$ROOT_DIR/codon/codon"
+if [[ -z "$CODON_SOURCE_DIR" && -d "$ROOT_DIR/codon" ]]; then
+  CODON_SOURCE_DIR="$ROOT_DIR/codon"
 fi
 LLVM_PATH="${LLVM_PATH:-$SEQURE_PATH/codon-llvm}"
 SEQ_PATH="${SEQ_PATH:-$SEQURE_PATH/codon-seq}"
