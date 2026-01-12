@@ -80,8 +80,6 @@ fi
 CXX_ABI_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=${ABI_FLAG}"
 if [[ -d "$ROOT_DIR/compat" ]]; then
   CXX_ABI_FLAGS+=" -I$ROOT_DIR/compat"
-  # Force the compat fmt ostream shim to avoid fmt version mismatches.
-  CXX_ABI_FLAGS+=" -include $ROOT_DIR/compat/fmt/ostream.h"
 fi
 echo "  ABI_FLAG=$ABI_FLAG"
 
