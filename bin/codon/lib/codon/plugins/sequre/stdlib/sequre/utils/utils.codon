@@ -1,0 +1,163 @@
+import prg
+
+from sequre.constants import MPC_FIELD_SIZE, MPC_RING_SIZE, MPC_MODULUS_BITS, mpc_uint
+from testing import assert_eq_approx
+
+
+def zeros_mat[TP = mpc_uint](rows: int, cols: int) -> list[list[TP]]:
+    return [[TP(0) for _ in range(cols)] for _ in range(rows)]
+
+
+def zeros_vec[TP = mpc_uint](size: int) -> list[TP]:
+    return [TP(0) for _ in range(size)]
+
+
+def zeros[TP = mpc_uint](shape):
+    if isinstance(shape, Tuple[int]):
+        return zeros_vec(shape[0], TP=TP)
+    elif isinstance(shape, Tuple[int, int]):
+        return zeros_mat(*shape, TP=TP)
+    else:
+        compile_error("Invalid shape for zeros")
+
+
+def ones_mat[TP = mpc_uint](rows: int, cols: int) -> list[list[TP]]:
+    return [[TP(1) for _ in range(cols)] for _ in range(rows)]
+
+
+def ones_vec[TP = mpc_uint](size: int) -> list[TP]:
+    return [TP(1) for _ in range(size)]
+
+
+def ones[TP = mpc_uint](shape):
+    if isinstance(shape, Tuple[int]):
+        return ones_vec(shape[0], TP=TP)
+    elif isinstance(shape, Tuple[int, int]):
+        return ones_mat(*shape, TP=TP)
+    else:
+        compile_error("Invalid shape for ones")
+
+
+def one_hot_vector[TP](idx: int, size: int, complement: bool = False) -> list[TP]:
+    one_hot_vec = ones_vec(size, TP=TP) if complement else zeros_vec(size, TP=TP)
+    one_hot_vec[idx] = TP(0) if complement else TP(1)
+    return one_hot_vec
+
+def arange[TP](size: int) -> list[TP]:
+    return [TP(i) for i in range(size)]
+
+
+def switch_pair[T1, T2](t: tuple[T1, T2]) -> tuple[T2, T1]:
+    return t[1], t[0]
+
+
+def cartesian(l_1: list[str], l_2: list[str]) -> list[str]:
+    c = list(len(l_1) * len(l_2))
+    for e_1 in l_1:
+        for e_2 in l_2:
+            c.append(f'{e_1} {e_2}')
+    return c
+
+
+def offline_evaluate_poly[TP](x: list[TP], coefs: list[TP], exps: list[list[int]], modulus: TP) -> TP:
+    result = TP(0)
+    for coef, exp in zip(coefs, exps):
+        result = result.add_mod(x.reduce_mul_powers(exp, modulus).mul_mod(coef, modulus), modulus)
+    
+    return result
+
+
+def adjust_indices(indices, shape):
+    if isinstance(indices, int):
+        return (indices + shape[0]) % shape[0]
+    elif isinstance(indices, slice):
+        start, stop, step, _ = indices.adjust_indices(shape[0])
+        return slice(start=start, stop=stop, step=step)
+    elif isinstance(indices, tuple):
+        rs, cs = indices
+        rs = adjust_indices(rs, shape)
+        cs = adjust_indices(cs, (shape[1],))
+        return (rs, cs)
+    else:
+        compile_error("MPP: invalid indices")
+
+
+def random_ints(shape, lower_limit=0, upper_limit=7):
+    if isinstance(shape, Tuple[int]):
+        return [prg.randint(lower_limit, upper_limit) for _ in range(shape[0])]
+    elif isinstance(shape, Tuple[int, int]):
+        return [[prg.randint(lower_limit, upper_limit) for _ in range(shape[1])] for _ in range(shape[0])]
+    else:
+        compile_error("Invalid shape for generating random ints")
+
+
+def random_floats(shape, scale=7):
+    if isinstance(shape, Tuple[int]):
+        return [scale * prg.random() for _ in range(shape[0])]
+    elif isinstance(shape, Tuple[int, int]):
+        return [[scale * prg.random() for _ in range(shape[1])] for _ in range(shape[0])]
+    else:
+        compile_error("Invalid shape for generating random floats")
+
+
+def random_complex(shape, scale=7):
+    if isinstance(shape, Tuple[int]):
+        return [complex(scale * prg.random(), scale * prg.random()) for _ in range(shape[0])]
+    elif isinstance(shape, Tuple[int, int]):
+        return [[complex(scale * prg.random(), scale * prg.random()) for _ in range(shape[1])] for _ in range(shape[0])]
+    else:
+        compile_error("Invalid shape for generating random complex numbers")
+
+
+def check(mpc, foo, msg: str, error, result, *args):
+    assert staticlen(args) <= 1024, f"utils.check: too many arguments: {staticlen(args)} > 1024"
+    
+    revealed_args = tuple(args[i].reveal(mpc) for i in staticrange(staticlen(args)))
+    raw_result = foo(*revealed_args)
+    revealed_result = result.reveal(mpc)
+
+    assert_eq_approx(msg, revealed_result, raw_result, error)
+
+
+def __rand_int[TP](upper_limit: TP) -> TP:
+    if isinstance(upper_limit, mpc_uint):
+        if upper_limit == MPC_FIELD_SIZE or upper_limit == MPC_RING_SIZE:
+            # Assuming that in FP config MPC_NBIT_K + MPC_NBIT_F + MPC_NBIT_V <= MPC_MODULUS_BITS - 1
+            return prg.getrandbits_intn(MPC_MODULUS_BITS - 1, TP=TP)
+        return TP(prg.randint(1, int(upper_limit)))
+    if isinstance(upper_limit, int):
+        return prg.randint(1, upper_limit)
+    if isinstance(upper_limit, u64):
+        return u64(prg.randint(1, int(upper_limit)))
+    
+    compile_error(f"Utils: Invalid type for the upper limit: {upper_limit}")
+
+
+def __rand_vec[TP](length: int, base: TP) -> list[TP]:
+    l = list[TP](length)
+    for _ in range(length): l.append(__rand_int(base))
+    return l
+
+
+def __rand_mat[TP](shape: list[int], base: TP) -> list[list[TP]]:
+    m, n = shape
+    l = list[list[TP]](m)
+    for _ in range(m): l.append(__rand_vec(n, base))
+    return l
+
+
+def __rand_bits(bitlen: int) -> mpc_uint:
+    return prg.getrandbits_intn(bitlen, TP=mpc_uint)
+
+
+def __rand_vec_bits(length: int, bitlen: int) -> list[mpc_uint]:
+    l = list[mpc_uint](length)
+    for _ in range(length): l.append(__rand_bits(bitlen))
+    return l
+
+
+def __rand_mat_bits(shape: list[int], bitlen: int) -> list[list[mpc_uint]]:
+    m, n = shape
+    l = list[list[mpc_uint]](m)
+    for _ in range(m): l.append(__rand_vec_bits(n, bitlen))
+    return l

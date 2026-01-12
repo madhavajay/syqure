@@ -4,3 +4,7 @@
 [submodule "sequre"]
 	path = sequre
 	url = git@github.com:madhavajay/sequre.git
+[submodule "external/llvm-project"]
+	path = external/llvm-project
+	url = https://github.com/exaloop/llvm-project
+	branch = codon

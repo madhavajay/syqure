@@ -15,108 +15,66 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  bundle-macos-arm:
-    name: Build Bundles (macOS arm64)
-    runs-on: macos-latest
+  sequre-linux-binary:
+    name: Sequre Plugin (Linux, prebuilt)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Pin sequre submodule to madhava/gmp-path
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C sequre fetch origin madhava/gmp-path
+          git -C sequre checkout -B madhava/gmp-path origin/madhava/gmp-path
 
-      - name: Restore Codon/Sequre build cache
+      - name: Restore Codon cache
         uses: actions/cache@v4
         with:
           path: |
-            codon/llvm-project/install
-            codon/install
-            codon-seq/install
-            target
-          key: bundle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build.sh', 'compile_codon.sh', 'compile_sequre.sh', 'codon/CMakeLists.txt', 'codon-seq/CMakeLists.txt', 'sequre/CMakeLists.txt') }}
+            ~/.codon
+          key: codon-${{ runner.os }}-${{ runner.arch }}-0.17.0
 
-      - name: Install LLVM
-        run: brew install llvm
+      - name: Install runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl \
+            libgmp10
 
-      - name: Build Codon/Sequre + bundle
+      - name: Install Codon v0.17.0 (if needed)
         shell: bash
         run: |
-          ./build.sh
-          ls syqure/bundles || true
+          set -euo pipefail
+          if [ ! -x "$HOME/.codon/bin/codon" ]; then
+            mkdir -p "$HOME/.codon"
+            curl -L https://github.com/exaloop/codon/releases/download/v0.17.0/codon-$(uname -s | awk '{print tolower($0)}')-$(uname -m).tar.gz | \
+              tar zxvf - -C "$HOME/.codon" --strip-components=1
+          fi
+          echo "$HOME/.codon/bin" >> "$GITHUB_PATH"
+          "$HOME/.codon/bin/codon" --version
 
-      - name: Upload macOS arm64 bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: syqure-bundle-aarch64-apple-darwin
-          path: syqure/bundles/*.tar.zst
-
-  rust:
-    name: Rust Checks
-    runs-on: ${{ matrix.os }}
-    if: true
-    continue-on-error: false
-    needs: [bundle-macos-arm]
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Download macOS arm64 bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: syqure-bundle-aarch64-apple-darwin
-          path: syqure/bundles
-
-      - name: Set bundle env
-        run: echo "SYQURE_BUNDLE_FILE=${{ github.workspace }}/syqure/bundles/aarch64-apple-darwin.tar.zst" >> $GITHUB_ENV
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Show Rust versions
+      - name: Install prebuilt Sequre plugin
+        shell: bash
         run: |
-          rustc --version
-          cargo --version
-          rustfmt --version
+          set -euo pipefail
+          PLUGIN_ROOT="$HOME/.codon/lib/codon/plugins/sequre"
+          mkdir -p "$PLUGIN_ROOT/build"
+          cp docker/binaries/libsequre.so "$PLUGIN_ROOT/build/libsequre.so"
+          cp sequre/plugin.toml "$PLUGIN_ROOT/plugin.toml"
+          rm -rf "$PLUGIN_ROOT/stdlib"
+          cp -R sequre/stdlib "$PLUGIN_ROOT/stdlib"
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('Cargo.lock') }}
+      - name: Smoke test (codon run)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./sequre.sh example/two_party_sum_simple.codon
 
-      - name: Cache cargo index
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('Cargo.lock') }}
-
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('Cargo.lock') }}-v1
-
-      - name: Check formatting
-        if: matrix.os != 'windows-latest'
-        run: cargo fmt --all -- --check
-
-      - name: Clippy (workspace)
-        if: matrix.os != 'windows-latest'
-        run: cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings
-
-      - name: Tests
-        run: cargo test --workspace --all-features --verbose
 
       - name: "Integration: run example"
         shell: bash

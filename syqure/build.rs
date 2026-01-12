@@ -21,19 +21,21 @@ fn main() {
             bridge.include(&bundle_inc);
         }
     }
-    // Fallback to repo-installed headers.
-    if let Some(repo_root) = repo_root() {
-        let codon_src = repo_root.join("codon");
-        if codon_src.exists() {
-            bridge.include(&codon_src);
-        }
-        let codon_install_inc = repo_root.join("codon/install/include");
-        if codon_install_inc.exists() {
-            bridge.include(&codon_install_inc);
-        }
-        let llvm_install_inc = repo_root.join("codon/llvm-project/install/include");
-        if llvm_install_inc.exists() {
-            bridge.include(&llvm_install_inc);
+    // Fallback to repo-installed headers only when no bundle is available.
+    if bundle_root.is_none() {
+        if let Some(repo_root) = repo_root() {
+            let codon_src = repo_root.join("codon");
+            if codon_src.exists() {
+                bridge.include(&codon_src);
+            }
+            let codon_install_inc = repo_root.join("codon/install/include");
+            if codon_install_inc.exists() {
+                bridge.include(&codon_install_inc);
+            }
+            let llvm_install_inc = repo_root.join("codon/llvm-project/install/include");
+            if llvm_install_inc.exists() {
+                bridge.include(&llvm_install_inc);
+            }
         }
     }
     if let Ok(llvm_inc) = env::var("SYQURE_LLVM_INCLUDE") {
@@ -59,12 +61,19 @@ fn main() {
                 println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
                 linked = true;
             }
-            // Also provide LLVM runtime libs (libc++/libc++abi) from the bundle if present.
+            // Only link against bundled LLVM when explicitly requested.
             let bundle_llvm = root.join("lib/llvm");
-            if bundle_llvm.exists() {
+            if bundle_llvm.exists()
+                && env::var("SYQURE_LINK_LLVM_SHARED")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false)
+            {
                 let path = bundle_llvm.display();
                 println!("cargo:rustc-link-search=native={}", path);
                 println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                if let Some(llvm_lib) = find_llvm_lib(&bundle_llvm) {
+                    println!("cargo:rustc-link-lib=dylib={}", llvm_lib);
+                }
             }
         }
         if !linked {
@@ -82,6 +91,20 @@ fn main() {
     // Link against Codon runtime + compiler; expect the caller's search path to be set.
     println!("cargo:rustc-link-lib=dylib=codonrt");
     println!("cargo:rustc-link-lib=dylib=codonc");
+    // Link LLVM only when explicitly requested to avoid duplicate LLVM copies.
+    if env::var("SYQURE_LINK_LLVM_SHARED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        // Shared LLVM already linked above when requested.
+    } else if env::var("SYQURE_LINK_LLVM_STATIC")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        if let Some(llvm_config) = llvm_config_path(&bundle_root) {
+            link_llvm_static(&llvm_config);
+        }
+    }
 
     bridge
         .file("src/ffi/bridge.cc")
@@ -111,6 +134,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SYQURE_CPP_INCLUDE");
     println!("cargo:rerun-if-env-changed=SYQURE_CPP_LIB_DIRS");
     println!("cargo:rerun-if-env-changed=SYQURE_BUNDLE_FILE");
+    println!("cargo:rerun-if-env-changed=SYQURE_LINK_LLVM_SHARED");
+    println!("cargo:rerun-if-env-changed=SYQURE_LINK_LLVM_STATIC");
+    println!("cargo:rerun-if-env-changed=SYQURE_LLVM_CONFIG");
 }
 
 fn repo_root() -> Option<std::path::PathBuf> {
@@ -208,6 +234,28 @@ fn bundle_root() -> Option<PathBuf> {
     Some(extract_dir)
 }
 
+fn find_llvm_lib(dir: &Path) -> Option<String> {
+    let mut entries = std::fs::read_dir(dir).ok()?;
+    while let Some(Ok(entry)) = entries.next() {
+        let path = entry.path();
+        let name = path.file_name()?.to_string_lossy();
+        if name == "libLLVM.so" || name == "libLLVM.dylib" {
+            return Some("LLVM".to_string());
+        }
+        if let Some(rest) = name.strip_prefix("libLLVM-") {
+            if let Some(lib) = rest.strip_suffix(".so") {
+                return Some(format!("LLVM-{}", lib));
+            }
+        }
+        if let Some(rest) = name.strip_prefix("libLLVM-") {
+            if let Some(lib) = rest.strip_suffix(".dylib") {
+                return Some(format!("LLVM-{}", lib));
+            }
+        }
+    }
+    None
+}
+
 fn rewrite_install_names(bundle_root: &Path) -> Result<(), String> {
     let codon_lib = bundle_root.join("lib/codon");
     let llvm_lib = bundle_root.join("lib/llvm");
@@ -272,4 +320,76 @@ fn rewrite_install_names(bundle_root: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn llvm_config_path(bundle_root: &Option<PathBuf>) -> Option<PathBuf> {
+    if let Ok(path) = env::var("SYQURE_LLVM_CONFIG") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    if let Some(root) = bundle_root {
+        let candidate = root.join("bin/llvm-config");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    if let Some(repo_root) = repo_root() {
+        let candidate = repo_root.join("codon/llvm-project/install/bin/llvm-config");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    if Command::new("llvm-config").arg("--version").output().is_ok() {
+        return Some(PathBuf::from("llvm-config"));
+    }
+    None
+}
+
+fn link_llvm_static(llvm_config: &Path) {
+    let libdir = run_llvm_config_raw(llvm_config, &["--libdir"]).map(PathBuf::from);
+    if let Some(dir) = &libdir {
+        println!("cargo:rustc-link-search=native={}", dir.display());
+    }
+    for lib in run_llvm_config(llvm_config, &["--libs", "--link-static"]) {
+        if let Some(dir) = &libdir {
+            let candidate = dir.join(format!("lib{}.a", lib));
+            if !candidate.exists() {
+                continue;
+            }
+        }
+        println!("cargo:rustc-link-lib=static={}", lib);
+    }
+    for lib in run_llvm_config(llvm_config, &["--system-libs", "--link-static"]) {
+        println!("cargo:rustc-link-lib=dylib={}", lib);
+    }
+}
+
+fn run_llvm_config(llvm_config: &Path, args: &[&str]) -> Vec<String> {
+    let stdout = run_llvm_config_raw(llvm_config, args).unwrap_or_default();
+    stdout
+        .split_whitespace()
+        .filter_map(|tok| {
+            if let Some(rest) = tok.strip_prefix("-l") {
+                return Some(rest.to_string());
+            }
+            if let Some(rest) = tok.strip_prefix("-L") {
+                println!("cargo:rustc-link-search=native={}", rest);
+                return None;
+            }
+            None
+        })
+        .collect()
+}
+
+fn run_llvm_config_raw(llvm_config: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new(llvm_config)
+        .args(args)
+        .output()
+        .expect("failed to run llvm-config");
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

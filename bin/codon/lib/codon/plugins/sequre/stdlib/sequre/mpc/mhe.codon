@@ -1,0 +1,1237 @@
+import prg
+
+from sequre.lattiseq.rlwe import \
+    SecretKey, \
+    PublicKey, \
+    RelinearizationKey, \
+    RotationKeySet, \
+    AdditiveShareBigint, \
+    EvaluationKey, \
+    new_rotation_key_set
+from sequre.lattiseq.params import DEFAULT_PARAMS
+from sequre.lattiseq.ckks import \
+    Parameters, \
+    Ciphertext, \
+    Plaintext, \
+    new_key_generator, \
+    new_plaintext, \
+    new_public_key, \
+    new_ciphertext, \
+    new_relinearization_key, \
+    new_parameters_from_literal, \
+    RotationType, \
+    generate_rot_keys, \
+    EncoderComplex128, \
+    PkEncryptor, \
+    Decryptor, \
+    Evaluator, \
+    new_evaluator, \
+    new_encoder_complex, \
+    new_encryptor, \
+    new_decryptor
+from sequre.lattiseq.ring import \
+    Poly as ring_Poly, \
+    new_gaussian_sampler
+from sequre.lattiseq.ringqp import \
+    UniformSampler, \
+    Poly, \
+    Ring, \
+    new_uniform_sampler
+from sequre.lattiseq.dckks import \
+    RefreshShare, \
+    RefreshProtocol, \
+    new_pcks_protocol, \
+    new_ckg_protocol, \
+    new_rkg_protocol, \
+    new_refresh_protocol, \
+    get_minimum_level_for_bootstrapping, \
+    new_rot_kg_protocol, \
+    new_e2s_protocol, \
+    new_s2e_protocol, \
+    new_additive_share_bigint
+from sequre.lattiseq.drlwe import \
+    PCKSShare, \
+    CKGShare, \
+    RKGShare, \
+    RTGShare, \
+    CKSShare
+from sequre.lattiseq.utils import new_prng
+from sequre.types.utils import double_to_fp, fp_to_double
+from sequre.utils.utils import zeros_vec, ones_vec, one_hot_vector, zeros_mat
+from sequre.utils.io import is_cached, read_cache, store_cache
+from sequre.constants import LATTISEQ_SIGMA_SMUDGE, LATTISEQ_DEFAULT_SIGMA, LATTISEQ_ROTATION_KEYS_COUNT, mpc_uint, lattiseq_int, lattiseq_uint
+
+from stats import MPCStats
+from randomness import MPCRandomness
+from comms import MPCComms
+
+from sequre.settings import DEBUG
+
+
+# CryptoParams aggregates all (d)ckks scheme information
+class CryptoParams:
+    sk_shard: SecretKey
+    pk: PublicKey
+    rlk: RelinearizationKey
+    rotks: RotationKeySet
+    params: Parameters
+
+    encoder: EncoderComplex128
+    encryptor: PkEncryptor
+    decryptor: Decryptor
+    evaluator: Evaluator
+
+    prec: u64
+
+    def __init__(self, params: Parameters):
+        self.params = params
+
+    def initialize(
+            self, sk_shard: SecretKey,
+            pk: PublicKey, rlk: RelinearizationKey, rtks: RotationKeySet, prec: u64):
+        
+        self.evaluator = new_evaluator(self.params, EvaluationKey(rlk=rlk, rtks=rtks))
+        self.encoder = new_encoder_complex(self.params)  # TODO: #218 Replace with big encoder
+        self.encryptor = new_encryptor(self.params, pk)
+        self.decryptor = new_decryptor(self.params, sk_shard)
+
+        self.sk_shard = sk_shard
+        self.pk = pk
+        self.rlk = rlk
+        self.rotks = rtks
+
+        # self.prec = # TODO: #218 Replace with big encoder
+
+
+class MPCMHE[TP]:
+    pid: int
+    stats: MPCStats
+    randomness: MPCRandomness
+    comms: MPCComms[TP]
+
+    crp_gen: UniformSampler
+    crypto_params: CryptoParams
+    refresh_protocol: RefreshProtocol
+
+    # Bootstrap safety params
+    bootstrap_min_level: int
+    bootstrap_log_bound: int
+    bootstrap_safe: bool
+
+    def __init__(self, comms: MPCComms[TP]):
+        self.pid = comms.pid
+        self.stats = comms.stats
+        self.randomness = comms.randomness
+        self.comms = comms
+    
+    def default_setup(self):
+        print(f"CP{self.pid}:\tSetting up default MHE setup ...")
+        ckks_params = new_parameters_from_literal(DEFAULT_PARAMS)
+        self._set_params(ckks_params)
+        self.collective_init(ckks_params, u64(256))
+
+    def collective_init(self, params: Parameters, prec: u64):
+        print(f"CP{self.pid}:\tMHE collective initialization ...")
+
+        kgen = new_key_generator(params)
+        ring_qp = params.ring_qp()
+
+        sk_shard = SecretKey()
+        if self.pid == 0: sk_shard.value = ring_qp.new_poly()
+        else: sk_shard = kgen.gen_secret_key()
+
+        p = ring_qp.new_poly()
+        self.crp_gen._mm_read(p)
+
+        print(f"CP{self.pid}:\tMHE generating public key ...")
+        pk = self._collective_pub_key_gen(params, sk_shard, self.crp_gen)
+
+        print(f"CP{self.pid}:\tMHE generating relinearization key ...")
+        rlk = self._collective_relin_key_gen(params, sk_shard, self.crp_gen)
+        
+        rot_keys_cache_path = f"_internal_mhe_rtks_{self.comms.number_of_parties}_CPs"
+        if DEBUG and is_cached(rot_keys_cache_path, self.pid):
+            print(f"CP{self.pid}:\tReading MHE rotation keys from cache ... ")
+            rtks = read_cache(rot_keys_cache_path, self.pid)
+        else:
+            print(f"CP{self.pid}:\tMHE generating rotation keys ... ")
+            rtks = self._collective_rot_key_gen(
+                params, sk_shard, self.crp_gen,
+                generate_rot_keys(params.slots(), LATTISEQ_ROTATION_KEYS_COUNT))
+            if DEBUG: store_cache(rtks, rot_keys_cache_path, self.pid)
+
+        self.crypto_params.initialize(sk_shard, pk, rlk, rtks, prec)
+        self.refresh_protocol = new_refresh_protocol(params, self.bootstrap_log_bound, LATTISEQ_DEFAULT_SIGMA)
+
+        print(f"CP{self.pid}:\tMHE initialized.")
+    
+    def enc_vector[T](self, values: list) -> list[T]:
+        nbr_max_coef = self.crypto_params.params.slots()
+        length = len(values)
+
+        _arr = list[T]((length + nbr_max_coef - 1) // nbr_max_coef)
+        elements_enc = 0
+
+        while elements_enc < length:
+            start = elements_enc
+            end = elements_enc + nbr_max_coef
+            if end > length: end = length
+
+            # Encoding values
+            plaintext = new_plaintext(
+                self.crypto_params.params,
+                self.crypto_params.params.max_level(),
+                self.crypto_params.params.default_scale)
+
+            self.crypto_params.encoder.encode(
+                values[start:end].pad_vec_inplace(nbr_max_coef).to_complex(),
+                plaintext,
+                self.crypto_params.params.log_slots)
+
+            if isinstance(T, Plaintext): _text = plaintext
+            elif isinstance(T, Ciphertext): _text = self.crypto_params.encryptor.encrypt_new(plaintext)
+            else: compile_error("Invalid cipher/plaintext type.")
+            
+            _arr.append(_text)
+            elements_enc += (end - start)
+
+        return _arr
+    
+    def cipher_to_additive_plaintext(self, ct: Ciphertext, hub_pid: int) -> AdditiveShareBigint:
+        parameters = self.crypto_params.params
+        
+        if self.pid == 0:
+            return new_additive_share_bigint(parameters, parameters.log_slots)
+
+        ct = self.comms.broadcast_from(ct, hub_pid)
+
+        level_start = ct.level()
+
+        assert (self.bootstrap_safe and
+                self.bootstrap_min_level <= level_start and
+                self.bootstrap_min_level < parameters.max_level()
+                ), f"E2S: Not enough levels to ensure correctness and 128 security.\n\tCurrent cipher level {level_start}.\n\tMin required level {self.bootstrap_min_level}.\n\tMax possible level for the selected parameters: {parameters.max_level()}\n"
+        
+        self.crypto_params.evaluator.drop_level(ct, ct.level() - self.bootstrap_min_level - 1)
+
+        e2s_protocol = new_e2s_protocol(parameters, 3.2)
+        public_e2s_share = e2s_protocol.allocate_share(level_start)
+        secret_share = new_additive_share_bigint(parameters, parameters.log_slots)
+        
+        e2s_protocol.gen_share(
+            self.crypto_params.sk_shard,
+            self.bootstrap_log_bound,
+            parameters.log_slots,
+            ct.value[1],
+            secret_share,
+            public_e2s_share)
+        
+        if self.pid == hub_pid:
+            for p in range(1, self.comms.number_of_parties):
+                if p != hub_pid:
+                    e2s_protocol._mm_aggregate_shares(public_e2s_share, self.comms.receive_as_jar(p, CKSShare), public_e2s_share)
+
+            # sum(-M_i) + x
+            e2s_protocol.get_share(secret_share, public_e2s_share, parameters.log_slots, ct, secret_share)
+        else: self.comms.send_as_jar(public_e2s_share, hub_pid)
+        
+        return secret_share
+    
+    def additive_plaintext_to_cipher(self, secret_share: AdditiveShareBigint, hub_pid: int) -> Ciphertext:
+        parameters = self.crypto_params.params
+        cipher_level = parameters.max_level()
+
+        assert (self.bootstrap_safe and
+                self.bootstrap_min_level <= cipher_level and
+                self.bootstrap_min_level < parameters.max_level()
+                ), f"E2S: Not enough levels to ensure correctness and 128 security.\n\tCurrent cipher level {cipher_level}.\n\tMin required level {self.bootstrap_min_level}.\n\tMax possible level for the selected parameters: {parameters.max_level()}\n"
+
+        crp = self.crp_gen._mm_read_new(parameters).q
+        s2e_protocol = new_s2e_protocol(parameters, 3.2)
+        public_s2e_share = s2e_protocol.allocate_share(cipher_level)
+
+        s2e_protocol.gen_share(
+            self.crypto_params.sk_shard,
+            crp,
+            parameters.log_slots,
+            secret_share,
+            public_s2e_share)
+        
+        if self.pid == hub_pid:
+            for p in range(1, self.comms.number_of_parties):
+                if p != hub_pid:
+                    s2e_protocol._mm_aggregate_shares(public_s2e_share, self.comms.receive_as_jar(p, CKSShare), public_s2e_share)
+        else: self.comms.send_as_jar(public_s2e_share, hub_pid)
+
+        ct_rec = new_ciphertext(parameters, 1, cipher_level, parameters.default_scale)
+        if self.pid == hub_pid:
+            s2e_protocol.get_encryption(public_s2e_share, crp, ct_rec)
+        
+        return ct_rec
+    
+    def decrypt(self, x: list[Ciphertext], source_pid: int = -2) -> list[Plaintext]:
+        """
+        If source_pid is:
+            - PID number (0, 1, 2, ...), then only the ciphers at that PID will be decrypted and broadcast to all parties
+            - -2, then each ciphervector will be collectively decrypted at each party one after the other
+            - -1, then the ciphers are expected to be already shared (the same) between the parties
+        """
+        assert source_pid > -3, f"MPCMHE: Invalid source PID: {source_pid}"
+        return self._collective_op(x, MPCMHE._collective_decrypt, source_pid)
+    
+    def decode[dtype](self, enc: list[Plaintext]) -> list[dtype]:
+        data_decoded = []
+
+        for plaintext in enc:
+            val = self.crypto_params.encoder.decode(plaintext, self.crypto_params.params.log_slots)
+            if isinstance(dtype, int):
+                data_decoded.extend([int(round(float(c))) for c in val])
+            else:  # dtype is float or complex
+                data_decoded.extend([dtype(c) for c in val])
+
+        return data_decoded
+    
+    def reveal[dtype](self, x: list, source_pid: int = -2) -> list[dtype]:
+        plain = x if isinstance(x, list[Plaintext]) else self.decrypt(x, source_pid)
+        return self.decode(enc=plain, dtype=dtype)
+    
+    def rescale(self, x: list[Ciphertext], target_scale: float):
+        for cipher in x:
+            if cipher.scale > target_scale:
+                self.crypto_params.evaluator.rescale(cipher, target_scale, cipher)
+                self.stats.secure_rescale_count += 1
+    
+    def requires_bootstrap(self, x: list[Ciphertext], min_level_distance: int = 0):
+        return [cipher.requires_bootstrap(self.bootstrap_min_level + min_level_distance) for cipher in x]
+    
+    def bootstrap(self, x: list[Ciphertext], is_broadcast: bool = False, min_level_distance: int = 0):
+        if self.pid == 0:
+            return
+
+        if is_broadcast:
+            for cipher in x:
+                if cipher.requires_bootstrap(self.bootstrap_min_level + min_level_distance):
+                    self._collective_bootstrap(cipher, -1)
+            return
+        
+        council = self.comms.collect(self.requires_bootstrap(x, min_level_distance))
+        for pid, requires_bootstrap in enumerate(council):
+            for i in range(len(requires_bootstrap)):
+                cipher = x[i] if i < len(x) else Ciphertext.nil_ideal()
+                if requires_bootstrap[i]:
+                    self._collective_bootstrap(cipher, pid + 1)
+        
+    def refresh(self, x: list[Ciphertext], is_broadcast: bool = False, min_level_distance: int = 0) -> list[Ciphertext]:
+        if not len(x):
+            return x
+        
+        self.rescale(x, self.crypto_params.params.default_scale)
+        self.bootstrap(x, is_broadcast, min_level_distance)
+        
+        return x
+    
+    def ineg(self, x: list) -> list:
+        for i in range(len(x)):
+			# TODO: Check level
+            self.crypto_params.evaluator.neg(x[i], x[i])
+        
+        return x
+    
+    def iadd_const(self, x: list[Ciphertext], constant) -> list[Ciphertext]:
+        if not len(x):
+            return x
+        
+        slots = self.crypto_params.params.slots()
+        for i in range(len(x)):
+            if x[i]._nil_ideal:
+                x[i] = self.enc_vector([constant for _ in range(slots)], T=Ciphertext)[0]
+                continue
+            self.crypto_params.evaluator.add_const(x[i], constant, x[i])
+        
+        return x
+    
+    def isub_const(self, x: list[Ciphertext], constant) -> list[Ciphertext]:
+        if not len(x):
+            return x
+        
+        slots = self.crypto_params.params.slots()
+        for i in range(len(x)):
+            if x[i]._nil_ideal:
+                x[i] = self.enc_vector([-constant for _ in range(slots)], T=Ciphertext)[0]
+                continue
+            self.crypto_params.evaluator.sub_const(x[i], constant, x[i])
+        
+        return x
+    
+    def imul_const(self, x: list[Ciphertext], constant) -> list[Ciphertext]:
+        if not len(x):
+            return x
+        
+        self.refresh(x)
+        for i in range(len(x)):
+            self.crypto_params.evaluator.mul_const(x[i], constant, x[i])
+        
+        return x
+    
+    def iadd(self, x: list, y: list) -> list:
+        assert len(x) == len(y), "Ciphervector lenghts differ"
+        
+        for i in range(len(x)):
+			# TODO: Check level
+            self.crypto_params.evaluator.add(x[i], y[i], x[i])
+        
+        return x
+    
+    def isub(self, x: list, y: list) -> list:
+        assert len(x) == len(y), "Ciphervector lenghts differ"
+        
+        for i in range(len(x)):
+			# TODO: Check level
+            self.crypto_params.evaluator.sub(x[i], y[i], x[i])
+        
+        return x
+    
+    def imul[T](self, x: list[Ciphertext], y: list[T], x_is_broadcast: bool = False, y_is_broadcast: bool = False, no_refresh: bool = False) -> list[Ciphertext]:
+        if not (isinstance(T, Ciphertext) or isinstance(T, Plaintext)):
+            compile_error("Invalid cipher type")
+        
+        assert len(x) == len(y), f"Ciphervector lenghts differ: {len(x)} != {len(y)}"
+
+        if not len(x):
+            return x
+        
+        max_len = max(len(x), len(y))
+        relin = True if isinstance(T, Ciphertext) else False
+        
+        if not no_refresh:
+            self.refresh(x, x_is_broadcast)
+            if isinstance(T, Ciphertext):
+                self.refresh(y, y_is_broadcast)
+
+        for i in range(max_len):
+            self.crypto_params.evaluator.mul_relin(x[i], y[i], relin, x[i])
+        
+        return x
+    
+    def imul_noboot[T](self, x: list[Ciphertext], y: list[T]) -> list[Ciphertext]:
+        if not (isinstance(T, Ciphertext) or isinstance(T, Plaintext)):
+            compile_error("Invalid cipher type")
+        
+        assert len(x) == len(y), "Ciphervector lenghts differ"
+
+        if not len(x):
+            return x
+        
+        max_len = max(len(x), len(y))
+        relin = True if isinstance(T, Ciphertext) else False
+
+        for i in range(max_len):
+            self.crypto_params.evaluator.mul_relin(x[i], y[i], relin, x[i])
+        
+        return x
+    
+    def irotate_butterfly(self, x: list[Ciphertext], k: int) -> list[Ciphertext]:
+        slots = self.crypto_params.params.slots()
+        neg = False
+        
+        if k < 0:
+            neg = True
+            k = -k
+        
+        if k > slots:
+            k %= slots
+        if k > (slots >> 1):
+            k = slots - k
+            neg ^= True
+        
+        log_step = 0
+        while k:
+            tzs = k.__cttz__()
+            k >>= (tzs + 1)
+            log_step += tzs
+            step = 1 << log_step
+            log_step += 1
+        
+            for i in range(len(x)):
+                self.crypto_params.evaluator.rotate(x[i], -step if neg else step, x[i])
+        
+        return x
+    
+    def irotate(self, x: list[Ciphertext], k: int) -> list[Ciphertext]:
+        if k <= LATTISEQ_ROTATION_KEYS_COUNT:
+            for i in range(len(x)):
+                self.crypto_params.evaluator.rotate(x[i], k, x[i])
+            return x
+        
+        return self.irotate_butterfly(x, k)
+
+    def neg(self, x: list) -> list:
+        return self.ineg(x.copy())
+    
+    def add_const(self, x: list, constant) -> list:
+        return self.iadd_const(x.copy(), constant)
+    
+    def sub_const(self, x: list, constant) -> list:
+        return self.isub_const(x.copy(), constant)
+    
+    def mul_const(self, x: list[Ciphertext], constant) -> list[Ciphertext]:
+        # Check if first operand should be refreshed before copying it downstream
+        self.refresh(x)
+        return self.imul_const(x.copy(), constant)
+    
+    def add(self, x: list, y: list) -> list:
+        return self.iadd(x.copy(), y)
+
+    def sub(self, x: list, y: list) -> list:
+        return self.isub(x.copy(), y)
+    
+    def mul(self, x: list[Ciphertext], y: list) -> list[Ciphertext]:
+        # Check if first operand should be refreshed before copying it downstream
+        # Second operand will be checked in imul
+        self.refresh(x)
+        return self.imul(x.copy(), y)
+    
+    def mul_noboot(self, x: list[Ciphertext], y: list) -> list[Ciphertext]:
+        return self.imul_noboot(x.copy(), y)
+    
+    def rotate(self, x: list[Ciphertext], k: int) -> list[Ciphertext]:
+        return self.irotate(x.copy(), k)
+    
+    def shift(self, x: list[Ciphertext], step: int) -> list[Ciphertext]:
+        slots = self.crypto_params.params.slots()
+        assert step < slots, "MPCMHE: shifting requires step to be less than the number of slots per each cipher"
+
+        rotated_tensor_data = self.rotate(x, step)
+        
+        mask = [(0 if (i < slots - step) else 1) for i in range(slots)]
+        cipher_mask = self.enc_vector(mask, T=Plaintext)[0]
+        cipher_mask_inv = self.enc_vector(mask ^ 1, T=Plaintext)[0]
+        mask_enc = [cipher_mask for _ in range(len(x))]
+        mask_inv_enc = [cipher_mask_inv for _ in range(len(x))]
+        
+        offset_tensor_data = self.mul(rotated_tensor_data, mask_enc)
+        offset_tensor_data.append(self.zero_cipher())
+        self.imul(rotated_tensor_data, mask_inv_enc)
+        rotated_tensor_data.insert(0, self.zero_cipher())
+        self.iadd(rotated_tensor_data, offset_tensor_data)
+
+        return rotated_tensor_data
+    
+    def shift_noboot(self, x: list[Ciphertext], step: int) -> list[Ciphertext]:
+        assert x, "Cannot shift empty ciphervector"
+        assert x[0].level() > self.bootstrap_min_level
+        slots = self.crypto_params.params.slots()
+        assert step < slots, "MPCMHE: shifting requires step to be less than the number of slots per each cipher"
+
+        rotated_tensor_data = self.rotate(x, step)
+        
+        mask = [(0 if (i < slots - step) else 1) for i in range(slots)]
+        cipher_mask = self.enc_vector(mask, T=Plaintext)[0]
+        cipher_mask_inv = self.enc_vector(mask ^ 1, T=Plaintext)[0]
+        mask_enc = [cipher_mask for _ in range(len(x))]
+        mask_inv_enc = [cipher_mask_inv for _ in range(len(x))]
+        
+        offset_tensor_data = self.mul_noboot(rotated_tensor_data, mask_enc)
+        offset_tensor_data.append(self.zero_cipher())
+        self.imul_noboot(rotated_tensor_data, mask_inv_enc)
+        rotated_tensor_data.insert(0, self.zero_cipher())
+        self.iadd(rotated_tensor_data, offset_tensor_data)
+
+        return rotated_tensor_data
+    
+    def reduce_add(self, x: list[Ciphertext], size: int, keep_dims: bool = True) -> list[Ciphertext]:
+        slots = self.crypto_params.params.slots()
+        assert 0 < size, "MPCMHE.reduce_add: Invalid number of columns per cipher"
+
+        reduced_cipher = x[0].copy()
+        for i in range(1, len(x)):
+            self.crypto_params.evaluator.add(reduced_cipher, x[i], reduced_cipher)
+
+        self.crypto_params.evaluator.reduce_add(reduced_cipher, min(slots, size))
+        
+        reduced_vector = []
+        
+        if keep_dims:
+            for _ in range(size // slots):
+                reduced_vector.append(reduced_cipher.copy())
+        
+        offset = size % slots
+        if offset:
+            if size <= (slots >> 1):
+                butterfly_movement = 1 << (size - 1).bitlen()  # 2 ^ int(log_2(size))
+                mirror_cipher = self.crypto_params.evaluator.rotate_new(reduced_cipher, slots - butterfly_movement)
+                self.crypto_params.evaluator.add(reduced_cipher, mirror_cipher, reduced_cipher)
+                
+            reduced_vector.append(reduced_cipher)
+        
+        if offset or not keep_dims:
+            mask_size = offset if keep_dims else 1
+            mask = self.enc_vector([(1.0 if i < mask_size else 0.0) for i in range(slots)], T=Plaintext)
+            self.imul(reduced_vector[-1:], mask)
+        
+        return reduced_vector
+    
+    def drop_level(self, a: list[list[Ciphertext]], out_level: int) -> list[list[Ciphertext]]:
+        out = list[list[Ciphertext]](len(a))
+        for i in range(len(a)):
+            row = list[Ciphertext](len(a[i]))
+            for j in range(len(a[i])):
+                if a[i][j].level() > out_level:
+                    row.append(self.crypto_params.evaluator.drop_level_new(a[i][j], a[i][j].level() - out_level))
+                elif a[i][j].level() == out_level:
+                    row.append(a[i][j].copy())
+                else:
+                    raise ValueError(f"DropLevel: requested level {out_level} when input is {a[i][j].level()}")
+            out.append(row)
+        return out
+    
+    def drop_level(self, a: list[Ciphertext], out_level: int) -> list[Ciphertext]:
+        out = list[Ciphertext](len(a))
+        for i in range(len(a)):
+            if a[i].level() > out_level:
+                out.append(self.crypto_params.evaluator.drop_level_new(a[i], a[i].level() - out_level))
+            elif a[i].level() == out_level:
+                out.append(a[i].copy())
+            else:
+                raise ValueError(f"DropLevel: requested level {out_level} when input is {a[i].level()}")
+        return out
+
+    def flatten_levels(self, x: list[list[Ciphertext]]) -> tuple[list[list[Ciphertext]], int]:
+        min_level = x[0][0].level()
+        not_flat = False
+        
+        for row in x:
+            for col in row:
+                if col.level() < min_level:
+                    min_level = col.level()
+                    not_flat = True
+
+        if not not_flat:
+            return x, min_level
+
+        return self.drop_level(x, min_level), min_level
+    
+    def zero_cipher(self) -> Ciphertext:
+        ct = new_ciphertext(
+            params=self.crypto_params.params,
+            degree=1,
+            level=self.crypto_params.params.max_level(),
+            scale=self.crypto_params.params.default_scale)
+        self.crypto_params.encryptor._mm_encrypt_zero(ct.get_rlwe_ciphertext())
+        return ct
+    
+    def additive_share_vector_to_ciphervector(self, shared_tensor, modulus: mpc_uint, is_fp: bool, target_pid: int = -1) -> List[Ciphertext]:
+        slots = self.crypto_params.params.slots()
+        if self.pid == 0:
+            return []
+
+        mask = shared_tensor.zeros()
+        # TODO: Masking is buggy at the moment. Needs to be fixed.
+        # downshift = 3
+        # mask = shared_tensor.rand(modulus, "uniform") >> downshift
+        # for i in range(len(shared_tensor)):
+        #     if mask[i] >= (modulus >> (downshift + 1)):
+        #         mask[i] = mask[i].sub_mod(modulus >> downshift, modulus)
+
+        masked_shared_tensor = self.comms.reveal(shared_tensor.sub_mod(mask, modulus), modulus)
+        share = masked_shared_tensor.add_mod(mask, modulus) if self.pid == self.comms.hub_pid else mask
+
+        # Pad shape if ciphertexts are not fully utilized
+        shape = shared_tensor.shape
+        if shape[-1] % slots:
+            new_shape = shape.copy()
+            new_shape[-1] = (shape[-1] + slots - 1) // slots * slots
+            share = share.resize(new_shape)
+
+        values = fp_to_double(share, modulus) if is_fp else share.to_int().astype(float)
+        ciphervector = self.enc_vector(values.flatten(), T=Ciphertext)
+        self.stats.secure_mpc_mhe_switch_count += len(ciphervector)
+        return self._aggregate_cipher_vector(ciphervector, target_pid=target_pid)
+        
+    def ciphervector_to_additive_share_vector[dtype](self, ciphervector: List[Ciphertext], number_of_elements: int, modulus: mpc_uint, source_pid: int) -> List[mpc_uint]:
+        # """
+        # If source_pid is:
+        #     - PID number (0, 1, 2, ...), then only the ciphers at that PID will be decrypted and broadcast to all parties
+        #     - -2, then each ciphervector will be collectively decrypted at each party one after the other
+        #     - -1, then the ciphers are expected to be already shared (the same) between the parties
+        # """
+        assert source_pid > -3, f"MPCMHE: Invalid source PID: {source_pid}"
+        self.stats.secure_mhe_mpc_switch_count += len(ciphervector)
+        
+        return self._temp_mhe_to_mpc_unsecure(
+            ciphervector=ciphervector,
+            number_of_elements=number_of_elements,
+            modulus=modulus,
+            source_pid=source_pid,
+            dtype=dtype)
+    
+    def _temp_mhe_to_mpc_secure[dtype](self, ciphervector: List[Ciphertext], number_of_elements: int, modulus: mpc_uint, source_pid: int) -> List[mpc_uint]:
+        slots = self.crypto_params.params.slots()
+        shared_vector = zeros_vec(number_of_elements)
+        if self.pid == 0:
+            return shared_vector
+
+        if source_pid >= 0:
+            ciphervector = self.comms.broadcast_from(ciphervector, source_pid)
+
+        ciphermatrix, level_start = self.flatten_levels([ciphervector])
+        ciphervector = ciphermatrix[0]
+
+        params = self.crypto_params.params
+        ring_q = params.ring_q
+        
+        seed = u32(prg.getrandbits(32))
+        sampler = new_gaussian_sampler(new_prng(seed), ring_q, 3.19, 19)
+
+        n = ring_q.n
+        mask_big_int = zeros_mat(len(ciphervector), n, TP=lattiseq_int)
+        # TODO: Masking is buggy at the moment. Needs to be fixed.
+        # downshift = 3
+        # bound = lattiseq_int(ring_q.modulus_at_level[level_start])
+        # bound >>= lattiseq_int(downshift)
+        # bound_half = bound >> lattiseq_int(1)
+        # for k in range(len(ciphervector)):
+        #     for j in range(n):
+        #         m = lattiseq_int(prg.getrandbits_intn(int(bound_half.bitlen()) - 2, TP=lattiseq_uint))
+        #         # if m >= bound_half:
+        #         #     m = m.sub_mod(m, bound)
+        #         mask_big_int[k][j] = m
+        
+        pt_mask = []
+        share_decrypt = [params.ring_q.new_poly_lvl(level_start) for _ in range(len(ciphervector))]
+        for k in range(len(ciphervector)):
+            # h0 = mask (at level min)
+            ring_q.set_coefficients_bigint_lvl(level_start, mask_big_int[k], share_decrypt[k])
+            ring_q._mm_ntt_lvl(level_start, share_decrypt[k], share_decrypt[k])
+            share_decrypt[k].is_ntt = True
+            pt_mask.append(Plaintext(share_decrypt[k].copy(), ciphervector[0].scale))
+
+            # h0 = sk*c1 + mask
+            ring_q._mm_mul_coeffs_montgomery_and_add_lvl(level_start, self.crypto_params.sk_shard.value.q, ciphervector[k].value[1], share_decrypt[k])
+
+            # h0 = sk*c1 + mask + e0
+            tmp = sampler._mm_read_new()
+            ring_q._mm_ntt_lvl(level_start, tmp, tmp)
+            tmp.is_ntt = True
+            
+            ring_q._mm_add_lvl(level_start, share_decrypt[k], tmp, share_decrypt[k])
+        
+        agg = self._aggregate_refresh_share_vec(share_decrypt, level_start)
+
+        pt = []
+        for i in range(len(ciphervector)):
+            ct_out = ciphervector[i].copy()
+            ring_q._mm_add_lvl(level_start, ct_out.value[0], agg[i], ct_out.value[0])
+
+            pt.append(ct_out.plaintext())
+
+        for i in range(len(pt)):
+            rv_out = zeros_vec(slots, TP=complex)
+            if self.pid == self.comms.hub_pid:
+                rv_out = self.crypto_params.encoder.decode(pt[i], self.crypto_params.params.log_slots)
+
+            rv_mask = self.crypto_params.encoder.decode(pt_mask[i], self.crypto_params.params.log_slots)
+            rv_out -= rv_mask
+
+            rv_out_shared = double_to_fp([e.real for e in rv_out], modulus)
+
+            start = i * slots
+            count = min(slots, number_of_elements - start)
+
+            for i in range(count):
+                shared_vector[i + start] = rv_out_shared[i]
+
+        return shared_vector
+    
+    def _temp_mhe_to_mpc_unsecure[dtype](self, ciphervector: List[Ciphertext], number_of_elements: int, modulus: mpc_uint, source_pid: int) -> List[mpc_uint]:
+        # Temp non-secure solution:
+        if self.pid == 0:
+            return zeros_vec(number_of_elements, TP=type(modulus))
+        
+        decrypted_vector = self.decrypt(ciphervector, source_pid)
+        if self.pid == self.comms.hub_pid:
+            decoded_values = self.decode(decrypted_vector, dtype=dtype)
+            if isinstance(dtype, float):
+                return double_to_fp(decoded_values, modulus)
+            elif isinstance(dtype, int):
+                return decoded_values.to_int_t(modulus)
+            else:
+                compile_error("Invalid type in ciphervector to additive share vector switch")
+        
+        return zeros_vec(number_of_elements, TP=type(modulus))
+
+    def mask_one[T](self, x: T, idx: int, complement: bool = False) -> T:
+        slots = self.crypto_params.params.slots()
+        
+        if isinstance(T, Plaintext) or isinstance(T, list[Plaintext]):
+            compile_error("Not implemented yet: masking plaintext")
+        elif isinstance(T, Ciphertext):
+            assert idx < slots, "MPCMHE: idx out of bound"
+
+            mask = self.enc_vector(one_hot_vector(idx, slots, complement, TP=float), T=Ciphertext)
+            return self.mul([x], mask)[0]
+        elif isinstance(T, list[Ciphertext]):
+            target_cipher_idx = idx // slots
+            target_cipher = x[target_cipher_idx]
+            masked_cipher = self.mask_one(target_cipher, idx % slots, complement)
+            if len(x) > 1:
+                fill_cipher = self.enc_vector(ones_vec(slots, TP=float), T=Ciphertext)[0] if complement else self.zero_cipher()
+            return [(fill_cipher.copy() if i != target_cipher_idx else masked_cipher) for i in range(len(x))]
+        else:
+            compile_error("Invalid input to mask")
+    
+    def mask_range[T](self, x: T, start: int, stop: int, complement: bool = False) -> T:
+        slots = self.crypto_params.params.slots()
+
+        start %= slots
+        stop %= slots
+        
+        if isinstance(T, Plaintext):
+            compile_error("Not implemented yet: masking plaintext")
+        elif isinstance(T, Ciphertext):
+            if start == stop == 0:
+                return self.zero_cipher() if complement else x.copy()
+
+            mask_value = 0.0 if complement else 1.0
+            mask_value_inv = 1.0 if complement else 0.0
+            mask = self.enc_vector([(mask_value if start <= i < stop else mask_value_inv) for i in range(slots)], T=Ciphertext)
+            return self.mul([x], mask)[0]
+        else:
+            compile_error("Invalid input to mask")
+    
+    def _set_params(self, params: Parameters):
+        self.randomness.switch_seed(-1)
+        seed = u32(0) if DEBUG else u32(prg.getrandbits(32))
+        self.randomness.restore_seed(-1)
+
+        ring_qp = params.ring_qp()
+        crp_gen = new_uniform_sampler(new_prng(seed), ring_qp)
+
+        self.crp_gen = crp_gen
+        self.crypto_params = CryptoParams(params)
+
+        self.bootstrap_min_level, self.bootstrap_log_bound, self.bootstrap_safe = get_minimum_level_for_bootstrapping(
+            128, params.default_scale, self.comms.number_of_parties - 1, params.q())
+        
+        assert self.bootstrap_safe, "MPCMHE: Colletive bootstrapping is unsafe for selected HE parametrization and number of computing parties. Aborting ..."
+    
+    def _collective_pub_key_gen(self, parameters: Parameters, sh_shard: SecretKey, crp_gen: UniformSampler) -> PublicKey:
+        sk = sh_shard
+
+        ckg_protocol = new_ckg_protocol(parameters)
+        pk_share = ckg_protocol.allocate_share()
+
+        crp = parameters.ring_qp().new_poly()
+        crp_gen._mm_read(crp)
+        ckg_protocol._mm_gen_share(sk, crp, pk_share)
+
+        pk_agg = self._aggregate_pub_key_shares(pk_share)
+
+        hub_pid = self.comms.hub_pid
+        if self.pid == 0:
+            pk_agg.value = self.comms.receive_as_jar(hub_pid, Poly)
+        elif self.pid == hub_pid:
+            self.comms.send_as_jar(pk_agg.value, 0)
+
+        pk = new_public_key(parameters)
+        ckg_protocol.gen_public_key(pk_agg, crp, pk)
+
+        return pk
+
+    def _aggregate_relin_key_share(self, share: RKGShare, second_slot: bool) -> RKGShare:
+        pid = self.pid
+        context_qp = self.crypto_params.params.ring_qp()
+        rns_decomp = len(share.value)
+        bit_decomp = len(share.value[0])
+
+        share_out = RKGShare()
+        share_out.value = list[list[list[Poly]]](rns_decomp)
+
+        if pid > 0:
+            if pid == self.comms.hub_pid:
+                # Initialize
+                for i in range(rns_decomp):
+                    mat = list[list[Poly]](bit_decomp)
+                    for j in range(bit_decomp):
+                        row = list[Poly](2)
+                        row.append(context_qp.new_poly())
+                        if second_slot: row.append(context_qp.new_poly())
+                        mat.append(row)
+                    share_out.value.append(mat)
+
+                # Aggregate
+                for p in range(1, self.comms.number_of_parties):
+                    for i in range(rns_decomp):
+                        for j in range(bit_decomp):
+                            if p != pid:
+                                other0 = self.comms.receive_as_jar(p, Poly)
+                                if second_slot: other1 = self.comms.receive_as_jar(p, Poly)
+                            else:
+                                other0 = share.value[i][j][0]
+                                if second_slot: other1 = share.value[i][j][1]
+
+                            context_qp._mm_add(other0, share_out.value[i][j][0], share_out.value[i][j][0])
+                            if second_slot:
+                                context_qp._mm_add(other1, share_out.value[i][j][1], share_out.value[i][j][1])
+
+                # Broadcast
+                for p in range(1, self.comms.number_of_parties):
+                    if p != pid:
+                        for i in range(rns_decomp):
+                            for j in range(bit_decomp):
+                                self.comms.send_as_jar(share_out.value[i][j][0], p)
+                                if second_slot: self.comms.send_as_jar(share_out.value[i][j][1], p)
+                
+            else:
+                # Send share
+                for i in range(rns_decomp):
+                    for j in range(bit_decomp):
+                        self.comms.send_as_jar(share.value[i][j][0], self.comms.hub_pid)
+                        if second_slot: self.comms.send_as_jar(share.value[i][j][1], self.comms.hub_pid)
+
+                # Receive result
+                for i in range(rns_decomp):
+                    mat = list[list[Poly]](bit_decomp)
+                    for j in range(bit_decomp):
+                        row = list[Poly](2)
+                        row.append(self.comms.receive_as_jar(self.comms.hub_pid, Poly))
+                        if second_slot: row.append(self.comms.receive_as_jar(self.comms.hub_pid, Poly))
+                        mat.append(row)
+                    share_out.value.append(mat)
+
+        return share_out
+    
+    def _collective_relin_key_gen(self, params: Parameters, sk_shard: SecretKey, crp_gen: UniformSampler) -> RelinearizationKey:
+        sk = sk_shard
+        ring_qp = params.ring_qp()
+
+        prot = new_rkg_protocol(params)
+        eph_sk, share_1, share_2 = prot.allocate_share()
+
+        rns_decomp = len(share_1.value)
+        bit_decomp = len(share_1.value[0])
+
+        assert len(share_1.value) == len(share_2.value)
+        assert len(share_1.value[0]) == len(share_2.value[0])
+
+        crp = self._mm_gen_crp_matrix(ring_qp, crp_gen, rns_decomp, bit_decomp)
+        evk = new_relinearization_key(params)
+
+        if self.pid > 0:
+            prot._mm_gen_share_round_one(sk, crp, eph_sk, share_1)
+            out_round_1 = self._aggregate_relin_key_share(share_1, True)
+
+            prot._mm_gen_share_round_two(eph_sk, sk, out_round_1, share_2)
+            out_round_2 = self._aggregate_relin_key_share(share_2, True)
+
+            prot.gen_relinearization_key(out_round_1, out_round_2, evk)
+        
+        return evk
+    
+    def _aggregate_rot_key_share(self, share: RTGShare) -> RTGShare:
+        rns_decomp, bit_decomp = share.value.shape
+        in_share_value = list[list[list[Poly]]](rns_decomp)
+        for i in range(rns_decomp):
+            in_share_value_row = list[list[Poly]](bit_decomp)
+            for j in range(bit_decomp):
+                in_share_value_row.append([share.value[i][j]])
+            in_share_value.append(in_share_value_row)
+        
+        in_share = RKGShare(in_share_value)
+        out = self._aggregate_relin_key_share(in_share, False).value
+
+        share_out_value = list[list[Poly]](rns_decomp)
+        for i in range(rns_decomp):
+            share_out_row = list[Poly](bit_decomp)
+            for j in range(bit_decomp):
+                share_out_row.append(out[i][j][0])
+            share_out_value.append(share_out_row)
+
+        return RTGShare(share_out_value)
+    
+    def _collective_rot_key_gen(self, parameters: Parameters, sk_shard: SecretKey,
+            crp_gen: UniformSampler, rot_types: set[RotationType]) -> RotationKeySet:
+        slots = parameters.slots()
+        sk = sk_shard
+
+        shifts = list[int](len(rot_types))
+        for rot_type in rot_types:
+            shift = 0
+            if rot_type.is_right(): shift = slots - rot_type.value
+            else: shift = rot_type.value
+
+            shifts.append(shift)
+
+        g_elems = list[u64](len(shifts))
+
+        for k in shifts:
+            g_elems.append(parameters.galois_element_for_column_rotation_by(k))
+
+        g_elems.sort()
+        rot_keys = new_rotation_key_set(parameters.get_rlwe_params(), g_elems)
+
+        if self.pid == 0:
+            return rot_keys
+
+        ring_qp = parameters.ring_qp()
+        for i in range(len(g_elems)):
+            gal_el = g_elems[i]
+            
+            rtg_protocol = new_rot_kg_protocol(parameters)
+            rtg_share = rtg_protocol.allocate_share()
+
+            crp = self._mm_gen_crp_matrix(
+                ring_qp, crp_gen, len(rtg_share.value), len(rtg_share.value[0]))
+
+            rtg_protocol._mm_gen_share(sk, gal_el, crp, rtg_share)
+            rtg_agg = self._aggregate_rot_key_share(rtg_share)
+            rtg_protocol.gen_rotation_key(rtg_agg, crp, rot_keys.keys[gal_el])
+
+            if DEBUG:
+                print(f"CP{self.pid}:\t\t{i + 1}/{len(g_elems)} rotation keys generated")
+
+        return rot_keys
+    
+    def _aggregate_decrypt_shares(self, poly: PCKSShare, out_level: int) -> PCKSShare:
+        out = PCKSShare()
+
+        pid = self.pid
+        if pid > 0:
+            if pid == self.comms.hub_pid:
+
+                for _ in range(len(poly.value)):
+                    out.value.append(self.crypto_params.params.ring_q.new_poly_lvl(out_level))
+                
+                for p in range(1, self.comms.number_of_parties):
+                    for i in range(len(poly.value)):
+                        new_poly = poly[i]
+                        if p != pid:
+                            new_poly = self.comms.receive_as_jar(p, type(poly[i]))
+                        level = len(new_poly._mm_coeffs) - 1
+                        self.crypto_params.params.ring_q._mm_add_lvl(level, new_poly, out[i], out[i])
+                
+                for p in range(1, self.comms.number_of_parties):
+                    if p != pid:
+                        for i in range(len(poly.value)):
+                            self.comms.send_as_jar(out[i], p)
+            else:
+                for i in range(len(poly.value)):
+                    self.comms.send_as_jar(poly[i], self.comms.hub_pid)
+                for i in range(len(poly.value)):
+                    out.value.append(self.comms.receive_as_jar(self.comms.hub_pid, type(poly[i])))
+
+        return out
+
+    def _aggregate_refresh_share(self, ref_protocol: RefreshProtocol, share: RefreshShare) -> RefreshShare:
+        context_q = self.crypto_params.params.ring_q
+
+        # Initialize
+        share_out = RefreshShare(
+            context_q.new_poly_lvl(share.e2s_share.value.level()),
+            context_q.new_poly_lvl(share.s2e_share.value.level()))
+
+        if self.pid > 0:
+            if self.pid == self.comms.hub_pid:
+                # Aggregate
+                for p in range(1, self.comms.number_of_parties):
+                    other = share
+                    if p != self.pid: other = self.comms.receive_as_jar(p, RefreshShare)
+                    ref_protocol.aggregate_shares(other, share_out, share_out)
+
+                # Broadcast
+                for p in range(1, self.comms.number_of_parties):
+                    if p != self.pid: self.comms.send_as_jar(share_out, p)
+            
+            else:
+                # Send share
+                self.comms.send_as_jar(share, self.comms.hub_pid)
+
+                # Receive result
+                share_out = self.comms.receive_as_jar(self.comms.hub_pid, RefreshShare)
+
+        return share_out
+
+    def _collective_conditional_bootstrap(self, ct: Ciphertext, hub_pid: int):
+        if ct.level() == self.bootstrap_min_level:
+            self._collective_bootstrap(ct, hub_pid)
+    
+    def _collective_bootstrap(self, ct: Ciphertext, hub_pid: int):
+        self.stats.secure_bootstrap_count += 1
+        
+        if self.pid == 0:
+            return
+
+        if hub_pid > -1:  # If ct is not already broadcast to all parties
+            ct = self.comms.broadcast_from(ct, hub_pid)
+
+        parameters = self.crypto_params.params
+        level_start = ct.level()
+
+        assert (self.bootstrap_safe and
+                self.bootstrap_min_level <= level_start and
+                self.bootstrap_min_level < parameters.max_level()
+                ), f"Bootstrapping: Not enough levels to ensure correctness and 128 security.\n\tCurrent cipher level {level_start}.\n\tMin required level {self.bootstrap_min_level}.\n\tMax possible level for the selected parameters: {parameters.max_level()}\n"
+
+        ref_protocol = self.refresh_protocol
+        ref_share = ref_protocol.allocate_share(level_start, parameters.max_level())
+        crp = self.crp_gen._mm_read_new(parameters).q
+        
+        ref_protocol.gen_share(
+            self.crypto_params.sk_shard,
+            self.bootstrap_log_bound,
+            parameters.log_slots,
+            ct.value[1],
+            ct.scale,
+            crp,
+            ref_share)
+
+        ref_agg = self._aggregate_refresh_share(ref_protocol, ref_share)
+        ref_protocol.finalize(ct, parameters.log_slots, crp, ref_agg, ct)
+    
+    def _collective_decrypt(self, ct: Ciphertext, hub_pid: int) -> Plaintext:
+        if self.pid == 0:
+            return Plaintext()
+        
+        tmp = ct
+        if hub_pid > -1:  # If ct is not already broadcast to all parties
+            tmp = self.comms.broadcast_from(ct, hub_pid)
+        parameters = self.crypto_params.params
+
+        zero_pk = new_public_key(parameters)
+
+        pcks_protocol = new_pcks_protocol(parameters, LATTISEQ_SIGMA_SMUDGE)
+        dec_share = pcks_protocol.allocate_share(tmp.level())
+
+        pcks_protocol._mm_gen_share(self.crypto_params.sk_shard, zero_pk, tmp.value[1], dec_share)
+        dec_agg = self._aggregate_decrypt_shares(dec_share, tmp.level())
+
+        ciphertext_switched = new_ciphertext(parameters, 1, tmp.level(), tmp.scale)
+        pcks_protocol.key_switch(tmp, dec_agg, ciphertext_switched)
+
+        return ciphertext_switched.plaintext()
+    
+    def _aggregate_pub_key_shares(self, poly: CKGShare) -> CKGShare:
+        out = CKGShare()
+
+        ring_qp = self.crypto_params.params.ring_qp()
+        if self.pid > 0:
+            if self.pid == self.comms.hub_pid:
+                out.value = ring_qp.new_poly()
+
+                for p in range(1, self.comms.number_of_parties):
+                    new_poly = poly.value
+                    if p != self.pid:
+                        new_poly = self.comms.receive_as_jar(p, Poly)
+                    ring_qp._mm_add(new_poly, out.value, out.value)
+                
+                for p in range(1, self.comms.number_of_parties):
+                    if p != self.pid:
+                        self.comms.send_as_jar(out.value, p)
+                
+            else:
+                self.comms.send_as_jar(poly.value, self.comms.hub_pid)
+                out.value = self.comms.receive_as_jar(self.comms.hub_pid, Poly)
+
+        return out
+    
+    def _mm_gen_crp_matrix(
+            self, ring_qp: Ring, crp_gen: UniformSampler,
+            rows: int, cols: int) -> list[list[Poly]]:
+        crp = list[list[Poly]](rows)
+        
+        for _ in range(rows):
+            row = list[Poly](cols)
+            for _ in range(cols):
+                p = ring_qp.new_poly()
+                crp_gen._mm_read(p)
+                row.append(p)
+            crp.append(row)
+        
+        return crp
+
+    def _aggregate_cipher_vector(self, ciphervector: List[Ciphertext], target_pid: int = -1) -> List[Ciphertext]:
+        if self.pid == 0: return []
+
+        if target_pid > 0:
+            if self.pid == target_pid:
+                # receive and add
+                out = ciphervector.copy()
+                for p in range(1, self.comms.number_of_parties):
+                    if p != self.pid:
+                        out = self.add(out, self.comms.receive_as_jar(p, List[Ciphertext]))
+            else:
+                self.comms.send_as_jar(ciphervector, target_pid)
+                out = []
+
+            return out    
+
+        if self.pid == self.comms.hub_pid:
+            # receive and add
+            out = ciphervector.copy()
+            for p in range(1, self.comms.number_of_parties):
+                if p != self.pid:
+                    out = self.add(out, self.comms.receive_as_jar(p, List[Ciphertext]))
+
+            for p in range(1, self.comms.number_of_parties):
+                if p != self.pid:
+                    self.comms.send_as_jar(out, p)
+        else:
+            self.comms.send_as_jar(ciphervector, self.comms.hub_pid)
+            out = self.comms.receive_as_jar(self.comms.hub_pid, List[Ciphertext])
+
+        return out
+
+    def _aggregate_refresh_share_vec(self, share: List[ring_Poly], out_level: int) -> List[ring_Poly]:
+        context_q = self.crypto_params.params.ring_q
+        share_out = []
+        
+        if self.pid > 0:
+            if self.pid == self.comms.hub_pid:
+                # Initialize
+                for i in range(len(share)):
+                    share_out.append(context_q.new_poly_lvl(out_level))
+
+                # Aggregate
+                for p in range(1, self.comms.number_of_parties):
+                    if p != self.pid: other = self.comms.receive_as_jar(p, List[ring_Poly])
+                    else: other = share
+
+                    for i in range(len(share)):
+                        context_q._mm_add_lvl(len(other[i]._buf_coeffs) - 1, other[i], share_out[i], share_out[i])
+
+                # Broadcast
+                for p in range(1, self.comms.number_of_parties):
+                    if p != self.pid:
+                        self.comms.send_as_jar(share_out, p)
+
+            else:
+                # Send share
+                self.comms.send_as_jar(share, self.comms.hub_pid)
+                # Receive result
+                share_out = self.comms.receive_as_jar(self.comms.hub_pid, List[ring_Poly])
+
+        return share_out
+    
+    def _collective_op(self, cipher: Ciphertext, collective_op, source_pid: int, include_trusted_dealer: bool = False):
+        assert source_pid > -3, f"MPCMHE: Invalid source PID: {source_pid}"
+        
+        if source_pid != -2 or (self.pid == 0 and not include_trusted_dealer):
+            return collective_op(self, cipher, source_pid)
+        
+        collection = self.comms.collect(cipher, include_trusted_dealer)
+        results = [collective_op(self, cipher, pid + 1) for pid, cipher in enumerate(collection)]
+        
+        return results[self.pid - 1]
+    
+    def _collective_op(self, x: list[Ciphertext], collective_op, source_pid: int, include_trusted_dealer: bool = False):
+        assert source_pid > -3, f"MPCMHE: Invalid source PID: {source_pid}"
+        
+        if source_pid != -2 or (self.pid == 0 and not include_trusted_dealer):
+            return [collective_op(self, cipher, source_pid) for cipher in x]
+        
+        collection = self.comms.collect(x, include_trusted_dealer)
+        results = [
+            [collective_op(self, cipher, pid) for cipher in collection[pid - 1]]
+            for pid in range(1, self.comms.number_of_parties)]
+        
+        return results[self.pid - 1]

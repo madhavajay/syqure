@@ -1,0 +1,104 @@
+from sequre.constants import MATMUL_LEAF_SIZE, DEBUG
+
+
+def mod_pow[TP](value: TP, power, mod: TP) -> TP:
+    # Performance warning: Not the most efficient implementation
+    # See http://cacr.uwaterloo.ca/hac/about/chap14.pdf pg24-pg31 for better approach
+    # Also see: https://stackoverflow.com/questions/354421/how-is-implemented-in-python
+    if power == 0: return TP(1)
+    if value == TP(0): return TP(0)
+    number = TP(1)
+    while power:
+        if power & 1:
+            number = number.mul_mod(value, mod)
+        power >>= 1
+        value = value.mul_mod(value, mod)
+    
+    return number
+
+
+def mod_inv[TP](value, modulus: TP):
+    if isinstance(value, list):
+        return [mod_pow(TP(e), modulus - 2, modulus) for e in value]
+    else:
+        return mod_pow(TP(value), modulus - 2, modulus)
+
+
+def next_pow_of_two(n: int):
+    if n.popcnt() == 1: return n
+    
+    num_bits = 0
+    while n:
+        num_bits += 1
+        n >>= 1
+    return 1 << (num_bits + 1)
+
+
+def strassenR[TP](A, B, modulus: TP):
+    n = len(A)
+
+    if n <= MATMUL_LEAF_SIZE:
+        return A.naive_matmul_mod(B, modulus)
+    
+    # initializing the new sub-matrices
+    newSize = n // 2
+    a11 = A[:newSize, :newSize]
+    a12 = A[:newSize, newSize:]
+    a21 = A[newSize:, :newSize]
+    a22 = A[newSize:, newSize:]
+    
+    b11 = B[:newSize, :newSize]
+    b12 = B[:newSize, newSize:]
+    b21 = B[newSize:, :newSize]
+    b22 = B[newSize:, newSize:]
+
+    # Calculating p1 to p7:
+    p1 = strassenR(a11.add_mod(a22, modulus), b11.add_mod(b22, modulus), modulus)
+    p2 = strassenR(a21.add_mod(a22, modulus), b11, modulus)
+    p3 = strassenR(a11, b12.sub_mod(b22, modulus), modulus)
+    p4 = strassenR(a22, b21.sub_mod(b11, modulus), modulus)
+    p5 = strassenR(a11.add_mod(a12, modulus), b22, modulus)
+    p6 = strassenR(a21.sub_mod(a11, modulus), b11.add_mod(b12, modulus), modulus)
+    p7 = strassenR(a12.sub_mod(a22, modulus), b21.add_mod(b22, modulus), modulus)
+
+    # calculating c21, c21, c11 e c22:
+    c12 = p3.add_mod(p5, modulus)
+    c21 = p2.add_mod(p4, modulus)
+    c11 = p1.add_mod(p4, modulus).add_mod(p7, modulus).sub_mod(p5, modulus)
+    c22 = p1.add_mod(p3, modulus).add_mod(p6, modulus).sub_mod(p2, modulus)
+
+    # Grouping the results obtained in a single matrix:
+    C = [[TP(0) for _ in range(0, n)] for _ in range(0, n)]
+    C[:newSize, :newSize] = c11
+    C[:newSize, newSize:] = c12
+    C[newSize:, :newSize] = c21
+    C[newSize:, newSize:] = c22
+    return C
+
+
+def strassen_padded[TP](A, B, modulus: TP):
+    a_rows, a_cols = A.shape
+    b_rows, b_cols = B.shape
+
+    # Pad with next pow of two
+    n = max(a_rows, b_cols, a_cols)
+    m = next_pow_of_two(n)
+    APrep = [[TP(0) for _ in range(m)] for _ in range(m)]
+    BPrep = [[TP(0) for _ in range(m)] for _ in range(m)]
+    APrep[:a_rows, :a_cols] = A
+    BPrep[:b_rows, :b_cols] = B
+    CPrep = strassenR(APrep, BPrep, modulus)
+    return CPrep[:a_rows, :b_cols]
+
+
+def strassen(A, B, modulus):
+    a_rows, a_cols = A.shape
+    b_rows, b_cols = B.shape
+    if DEBUG: assert a_cols == b_rows
+
+    if (a_cols < MATMUL_LEAF_SIZE or 
+        b_rows < MATMUL_LEAF_SIZE or
+        a_rows < MATMUL_LEAF_SIZE):
+            return A.naive_matmul_mod(B, modulus)
+    
+    return strassen_padded(A, B, modulus)

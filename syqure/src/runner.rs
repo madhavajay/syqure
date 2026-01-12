@@ -66,9 +66,11 @@ impl Syqure {
 
         clean_sockets()?;
 
+        let plugin = resolve_plugin_path(&codon_root, &self.opts.plugin);
+
         if self.opts.run_after_build {
             let result = sy_codon_run(
-                &self.make_opts(source, /*standalone=*/ false),
+                &self.make_opts(source, /*standalone=*/ false, plugin.clone()),
                 &self.opts.program_args,
             );
             if result.status != 0 {
@@ -80,7 +82,7 @@ impl Syqure {
         // Build only.
         let output = default_output_path(source);
         let result = sy_codon_build_exe(
-            &self.make_opts(source, /*standalone=*/ true),
+            &self.make_opts(source, /*standalone=*/ true, plugin),
             output.to_str().unwrap_or_default(),
         );
         if result.status != 0 {
@@ -89,11 +91,11 @@ impl Syqure {
         Ok(Some(output))
     }
 
-    fn make_opts(&self, source: &Path, standalone: bool) -> SyCompileOpts {
+    fn make_opts(&self, source: &Path, standalone: bool, plugin: String) -> SyCompileOpts {
         SyCompileOpts {
             argv0: self.codon_bin().to_string_lossy().into_owned(),
             input: source.to_string_lossy().into_owned(),
-            plugins: vec![self.opts.plugin.clone()],
+            plugins: vec![plugin],
             disabled_opts: self.opts.disable_opts.clone(),
             libs: self.opts.libs.clone(),
             linker_flags: self.opts.linker_flags.clone(),
@@ -144,4 +146,12 @@ fn clean_sockets() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn resolve_plugin_path(codon_root: &Path, plugin: &str) -> String {
+    let candidate = codon_root.join("plugins").join(plugin);
+    if candidate.join("plugin.toml").exists() {
+        return candidate.to_string_lossy().into_owned();
+    }
+    plugin.to_string()
 }

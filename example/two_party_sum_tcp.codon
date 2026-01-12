@@ -1,0 +1,37 @@
+from sequre import sequre, mpc, Sharetensor as ST
+
+
+# Secure addition over secret shares (TCP mode).
+@sequre
+def secure_add(mpc, a, b):
+    return a + b
+
+
+def main():
+    m = mpc()
+    # Each party's private input (dealer CP0 has none).
+    party_inputs = {1: 5, 2: 9}
+    my_val = party_inputs.get(m.pid, 0)
+
+    a = ST.enc(
+        m,
+        my_val if m.pid == 1 else 0,
+        source_pid=1,
+        modulus=m.default_mpc_modulus,
+    )
+    b = ST.enc(
+        m,
+        my_val if m.pid == 2 else 0,
+        source_pid=2,
+        modulus=m.default_mpc_modulus,
+    )
+
+    total = secure_add(m, a, b)
+
+    if m.pid in (1, 2):
+        print(f"CP{m.pid}: my input = {my_val}, sum = {total.reveal(m)}")
+
+    m.done()
+
+
+main()

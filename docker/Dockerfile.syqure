@@ -1,0 +1,29 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libgmp10 \
+      libgmp-dev \
+      libedit2 \
+      libxml2 \
+      libsodium23 \
+      libssl3 \
+      libuuid1 \
+      python3 \
+      zstd && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV SYQURE_BUNDLE_CACHE=/opt/syqure-cache
+
+WORKDIR /workspace
+
+COPY target/debug/syqure /usr/local/bin/syqure
+COPY bin/codon/lib/codon /usr/local/bin/lib/codon
+COPY example /workspace/example
+
+ENV LD_LIBRARY_PATH=/usr/local/bin/lib/codon:/usr/lib/x86_64-linux-gnu
+
+# Prewarm the bundle cache so first run is fast.
+RUN mkdir -p "$SYQURE_BUNDLE_CACHE" && \
+    syqure example/two_party_sum_simple.codon

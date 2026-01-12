@@ -1,0 +1,29 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      libgmp10 \
+      libgmp-dev \
+      python3 \
+      python3-dev \
+      zstd && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /root/.codon
+COPY bin/codon /root/.codon
+
+RUN mkdir -p /root/.codon/lib/codon/plugins/sequre/build
+COPY docker/binaries/libsequre.so /root/.codon/lib/codon/plugins/sequre/build/libsequre.so
+COPY sequre/plugin.toml /root/.codon/lib/codon/plugins/sequre/plugin.toml
+COPY sequre/stdlib /root/.codon/lib/codon/plugins/sequre/stdlib
+
+COPY example /workspace/example
+COPY sequre.sh /workspace/sequre.sh
+COPY target/debug/syqure /workspace/target/debug/syqure
+COPY bin/codon/lib/codon /workspace/target/debug/lib/codon
+
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+
+WORKDIR /workspace

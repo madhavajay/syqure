@@ -1,0 +1,83 @@
+name: Codon Binaries (Linux)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - compile_codon.sh
+      - compile_codon_linux.sh
+      - codon
+      - .github/workflows/codon-binaries.yml
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_BRANCH: madhava/binaries
+
+jobs:
+  codon-linux-bundle:
+    name: Build Codon bundle (linux-x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Compute build hash
+        id: hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          codon_sha="$(git -C codon rev-parse HEAD)"
+          script_sha="$(sha256sum compile_codon.sh compile_codon_linux.sh | sha256sum | awk '{print $1}')"
+          build_hash="$(printf "codon=%s\nscripts=%s\n" "$codon_sha" "$script_sha" | sha256sum | awk '{print $1}')"
+          echo "hash=$build_hash" >> "$GITHUB_OUTPUT"
+          if [ -f docker/binaries/codon-build.hash ]; then
+            if [ "$(cat docker/binaries/codon-build.hash)" = "$build_hash" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Install build deps
+        if: steps.hash.outputs.skip != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang \
+            cmake \
+            ninja-build \
+            zstd \
+            libssl-dev \
+            libuuid-dev \
+            libedit-dev \
+            libxml2-dev \
+            zlib1g-dev \
+            libzstd-dev
+
+      - name: Build Codon (with Jupyter)
+        if: steps.hash.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SKIP_JUPYTER_KERNEL=1 ./compile_codon_linux.sh --clean
+
+      - name: Create bundle
+        if: steps.hash.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C codon/install -I "zstd -T0 -19" -cf docker/binaries/codon-install-linux-x86_64.tar.zst .
+          echo "${{ steps.hash.outputs.hash }}" > docker/binaries/codon-build.hash
+
+      - name: Push bundle to binaries branch
+        if: steps.hash.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BIN_BRANCH"
+          git add docker/binaries/codon-install-linux-x86_64.tar.zst docker/binaries/codon-build.hash
+          git commit -m "Update Codon Linux bundle" || exit 0
+          git push origin "$BIN_BRANCH"
