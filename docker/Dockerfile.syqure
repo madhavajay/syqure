@@ -4,6 +4,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates \
       libgmp10 \
+      libgmp-dev \
       libedit2 \
       libxml2 \
       libsodium23 \

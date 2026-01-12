@@ -5,11 +5,13 @@
 /.vscode
 
 /target
+!/target/debug/syqure
 /external
 /codon
 /sequre
 /syqure
 /bin
+!/bin/codon/lib/codon
 /docker
 /notebooks
 /python
