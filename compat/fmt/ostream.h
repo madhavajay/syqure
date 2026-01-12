@@ -1,14 +1,9 @@
 #pragma once
 
-// Load the system fmt ostream header, then add a compatibility fallback.
-#include_next <fmt/ostream.h>
+// Provide ostream formatter support without relying on system fmt/ostream.h.
+#include <fmt/format.h>
 #include <sstream>
 
-#ifndef FMT_VERSION
-#define FMT_VERSION 0
-#endif
-
-#if FMT_VERSION < 90000
 namespace fmt {
 template <typename Char = char>
 struct ostream_formatter {
@@ -25,4 +20,3 @@ struct ostream_formatter {
   }
 };
 }  // namespace fmt
-#endif
