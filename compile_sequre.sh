@@ -41,10 +41,30 @@ require_cmd ninja
 require_cmd clang
 require_cmd clang++
 
+abspath() {
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m "$1"
+    return
+  fi
+  python3 - <<'PY' "$1"
+from pathlib import Path
+import sys
+print(Path(sys.argv[1]).resolve())
+PY
+}
+
 if [[ ! -d "$CODON_PATH/include/codon" || ! -d "$CODON_PATH/lib/codon" ]]; then
   echo "Codon install not found at $CODON_PATH" >&2
   echo "Install Codon or set CODON_PATH to the Codon install prefix." >&2
   exit 1
+fi
+
+CODON_PATH="$(abspath "$CODON_PATH")"
+SEQURE_PATH="$(abspath "$SEQURE_PATH")"
+LLVM_PATH="$(abspath "$LLVM_PATH")"
+SEQ_PATH="$(abspath "$SEQ_PATH")"
+if [[ -n "${CODON_SOURCE_DIR:-}" ]]; then
+  CODON_SOURCE_DIR="$(abspath "$CODON_SOURCE_DIR")"
 fi
 
 ABI_FLAG=0
