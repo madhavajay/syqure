@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_NAME="${IMAGE_NAME:-syqure-cli}"
 DOCKERFILE="${DOCKERFILE:-$SCRIPT_DIR/docker/Dockerfile.syqure}"
+RUNTIME_BUNDLE="${RUNTIME_BUNDLE:-1}"
 
 msg() {
   printf "\n==> %s\n" "$*"
@@ -21,11 +22,14 @@ if [ ! -f "$PLUGIN_SO" ]; then
   CODON_PATH="$SCRIPT_DIR/bin/codon" "$SCRIPT_DIR/compile_sequre.sh"
 fi
 
-msg "Bundling Codon/Sequre assets for syqure"
-CODON_PATH="$SCRIPT_DIR/bin/codon" "$SCRIPT_DIR/bin_libs.sh"
-
 msg "Building syqure (Rust)"
-cargo build -p syqure
+if [ "$RUNTIME_BUNDLE" = "1" ]; then
+  cargo build -p syqure --features runtime-bundle
+else
+  msg "Bundling Codon/Sequre assets for syqure"
+  CODON_PATH="$SCRIPT_DIR/bin/codon" "$SCRIPT_DIR/bin_libs.sh"
+  cargo build -p syqure
+fi
 
 if [ ! -f "$DOCKERFILE" ]; then
   echo "Error: Dockerfile not found at $DOCKERFILE." >&2

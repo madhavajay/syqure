@@ -3,8 +3,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn main() {
-    set_bundle_env();
-    let bundle_root = bundle_root();
+    let runtime_bundle = env::var("CARGO_FEATURE_RUNTIME_BUNDLE").is_ok();
+    if !runtime_bundle {
+        set_bundle_env();
+    } else {
+        println!("cargo:rerun-if-env-changed=SYQURE_BUNDLE_FILE");
+    }
+    let bundle_root = if runtime_bundle { None } else { bundle_root() };
 
     // Build the C++ bridge. We keep it minimal for now and allow downstream
     // overrides for include/library paths via env vars.
