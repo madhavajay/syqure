@@ -1,6 +1,10 @@
 {
   "linux-x86_64": {
-    "codon": null,
+    "codon": {
+      "artifact": "codon-linux-x86_64-c1da4f92c309d20778777bb0383883ca0af14380",
+      "run_id": "20902278421",
+      "sha": "c1da4f92c309d20778777bb0383883ca0af14380"
+    },
     "sequre": null,
     "syqure": null
   }
