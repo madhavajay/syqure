@@ -323,6 +323,36 @@ SEQURE_USE_FILES=1 SEQURE_FILE_DIR=/shared/mpc ./sequre.sh script.codon 0
 
 The native Codon approach is the sweet spot—simpler than sbproxy at runtime, and no C++ recompilation needed when iterating on the transport layer.
 
+## Biovault integration notes (draft)
+
+Goal: allow pipeline steps to run Sequre MPC across multiple systems, with authoring in .codon or .py (Python-like with @sequre decorators), validate locally without executing, and submit to run on actual parties.
+
+Observed in current repo:
+- The Python package in this repo is a thin wrapper over the Rust runner; it compiles/runs Codon sources but does not provide decorator-level simulation.
+- The @sequre decorator is defined in Codon's Sequre stdlib, not Python.
+- Biovault pipeline steps currently run "projects" via template=dynamic-nextflow only; a new runner path would be needed for syqure.
+
+Proposed interface directions:
+1) New project template "syqure" (most consistent with Biovault today).
+   - project.yaml declares script (.codon or .py), inputs/outputs, and MPC config.
+   - pipeline runner dispatches by template to a syqure runner (CLI or Python bindings).
+   - keeps existing pipeline validation and publish/store wiring.
+
+2) New pipeline step kind "engine: syqure" (bypass project.yaml).
+   - pipeline.yaml embeds script + inputs/outputs + MPC settings inline.
+   - dedicated validator and runner in pipeline code.
+   - simpler authoring, but more pipeline-specific logic.
+
+3) Keep Nextflow template and wrap syqure inside Nextflow processes.
+   - minimal Biovault code change, but heavier runtime and awkward multi-party orchestration.
+
+4) Two-phase submit model: local validate -> remote execute.
+   - Python shim captures source, calls syqure.compile(run_after_build=false) to validate.
+   - "Submit" emits a run manifest consumed by parties (SyftBox/file transport).
+   - pipeline step coordinates status rather than executing locally.
+
+Suggested next step: implement option (1) for integration with current pipeline system, then layer option (4) for distributed runs.
+
 ## Design Principles
 
 1. **Transparency** - Sequre code doesn't change; sbproxy intercepts at the network layer
