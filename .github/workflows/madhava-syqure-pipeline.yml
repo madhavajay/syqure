@@ -17,8 +17,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  configure-sequre:
+    name: Sequre Configure (fail-fast)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install configure dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config jq \
+            libfmt-dev libedit-dev libxml2-dev zstd \
+            libsodium-dev libssl-dev
+
+      - name: Fetch cached Codon + LLVM artifacts
+        run: |
+          set -euo pipefail
+          if [ ! -f ci/artifacts.json ]; then
+            echo "ci/artifacts.json missing; cannot fetch cached artifacts." >&2
+            exit 1
+          fi
+          CODON_RUN_ID="$(jq -r '.["linux-x86_64"].codon.run_id // empty' ci/artifacts.json)"
+          CODON_ARTIFACT="$(jq -r '.["linux-x86_64"].codon.artifact // empty' ci/artifacts.json)"
+          LLVM_RUN_ID="$(jq -r '.["linux-x86_64"].llvm.run_id // empty' ci/artifacts.json)"
+          LLVM_ARTIFACT="$(jq -r '.["linux-x86_64"].llvm.artifact // empty' ci/artifacts.json)"
+          if [ -z "$CODON_RUN_ID" ] || [ -z "$CODON_ARTIFACT" ] || [ -z "$LLVM_RUN_ID" ] || [ -z "$LLVM_ARTIFACT" ]; then
+            echo "Cached artifacts not found in ci/artifacts.json." >&2
+            exit 1
+          fi
+          mkdir -p ci/_artifacts/codon ci/_artifacts/codon-llvm
+          gh run download "$CODON_RUN_ID" -n "$CODON_ARTIFACT" -D ci/_artifacts/codon
+          gh run download "$LLVM_RUN_ID" -n "$LLVM_ARTIFACT" -D ci/_artifacts/codon-llvm
+          CODON_TAR="$(ls ci/_artifacts/codon/codon-*.tar.zst | head -n 1)"
+          mkdir -p ci/_artifacts/codon/extract
+          zstd -dc "$CODON_TAR" | tar -C ci/_artifacts/codon/extract -xf -
+          echo "CODON_PATH=$(pwd)/ci/_artifacts/codon/extract/codon" >> "$GITHUB_ENV"
+          echo "LLVM_DIR=$(pwd)/ci/_artifacts/codon-llvm/install/lib/cmake/llvm" >> "$GITHUB_ENV"
+
+      - name: Configure Sequre
+        run: |
+          cmake -S sequre -B sequre/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCODON_PATH="$CODON_PATH" \
+            -DCODON_SOURCE_DIR="$(pwd)/codon" \
+            -DLLVM_DIR="$LLVM_DIR" \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+
   build-linux-x86_64:
     runs-on: ubuntu-22.04
+    needs: configure-sequre
     env:
       PLATFORM: linux-x86_64
       CODON_ARTIFACT_DIR: ci/_artifacts/codon
