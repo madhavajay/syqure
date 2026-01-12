@@ -6,6 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODON_PATH="${CODON_PATH:-$HOME/.codon}"
+CODON_LLVM_DIR="${CODON_LLVM_DIR:-}"
 export CODON_PATH
 
 if [ ! -d "$CODON_PATH/lib/codon" ]; then
@@ -41,6 +42,9 @@ fi
 
 # Bundle LLVM shared library from Codon's build if available.
 LLVM_LIBDIR="$ROOT_DIR/codon/llvm-project/install/lib"
+if [ -n "$CODON_LLVM_DIR" ] && [ -d "$CODON_LLVM_DIR/install/lib" ]; then
+  LLVM_LIBDIR="$CODON_LLVM_DIR/install/lib"
+fi
 if [ -d "$LLVM_LIBDIR" ]; then
   if ls "$LLVM_LIBDIR"/libLLVM*.so* >/dev/null 2>&1; then
     mkdir -p "$DIST_DIR/lib/llvm"
@@ -50,7 +54,9 @@ fi
 
 # Include LLVM headers if available (needed for the Rust C++ bridge).
 LLVM_INC=""
-if [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]; then
+if [ -n "$CODON_LLVM_DIR" ] && [ -d "$CODON_LLVM_DIR/install/include" ]; then
+  LLVM_INC="$CODON_LLVM_DIR/install/include"
+elif [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]; then
   LLVM_INC="$ROOT_DIR/codon/llvm-project/install/include"
 elif [ -d "$ROOT_DIR/external/llvm-project/llvm/include" ]; then
   LLVM_INC="$ROOT_DIR/external/llvm-project/llvm/include"
