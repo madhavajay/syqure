@@ -10,6 +10,10 @@ if [[ -z "${CODON_PATH:-}" ]]; then
     CODON_PATH="$HOME/.codon"
   fi
 fi
+CODON_SOURCE_DIR="${CODON_SOURCE_DIR:-}"
+if [[ -z "$CODON_SOURCE_DIR" && -d "$ROOT_DIR/codon/codon" ]]; then
+  CODON_SOURCE_DIR="$ROOT_DIR/codon/codon"
+fi
 LLVM_PATH="${LLVM_PATH:-$SEQURE_PATH/codon-llvm}"
 SEQ_PATH="${SEQ_PATH:-$SEQURE_PATH/codon-seq}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
@@ -25,6 +29,7 @@ require_cmd() {
 echo "Using paths:"
 echo "  SEQURE_PATH=$SEQURE_PATH"
 echo "  CODON_PATH=$CODON_PATH"
+echo "  CODON_SOURCE_DIR=${CODON_SOURCE_DIR:-<unset>}"
 echo "  LLVM_PATH=$LLVM_PATH"
 echo "  SEQ_PATH=$SEQ_PATH"
 echo "  BUILD_TYPE=$BUILD_TYPE"
@@ -43,8 +48,14 @@ if [[ ! -d "$CODON_PATH/include/codon" || ! -d "$CODON_PATH/lib/codon" ]]; then
 fi
 
 ABI_FLAG=0
-if rg -q "B5cxx11" <<<"$(nm -D "$CODON_PATH/lib/codon/libcodonc.so" 2>/dev/null)"; then
-  ABI_FLAG=1
+if command -v rg >/dev/null 2>&1; then
+  if rg -q "B5cxx11" <<<"$(nm -D "$CODON_PATH/lib/codon/libcodonc.so" 2>/dev/null)"; then
+    ABI_FLAG=1
+  fi
+else
+  if nm -D "$CODON_PATH/lib/codon/libcodonc.so" 2>/dev/null | grep -q "B5cxx11"; then
+    ABI_FLAG=1
+  fi
 fi
 CXX_ABI_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=${ABI_FLAG}"
 echo "  ABI_FLAG=$ABI_FLAG"
@@ -102,6 +113,7 @@ rm -rf "$SEQURE_PATH/build"
 cmake -S "$SEQURE_PATH" -B "$SEQURE_PATH/build" -G Ninja \
   -DLLVM_DIR="$LLVM_PATH/install/lib/cmake/llvm" \
   -DCODON_PATH="$CODON_PATH" \
+  ${CODON_SOURCE_DIR:+-DCODON_SOURCE_DIR="$CODON_SOURCE_DIR"} \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
   -DCMAKE_CXX_FLAGS="$CXX_ABI_FLAGS" \
   -DCMAKE_C_COMPILER=clang \

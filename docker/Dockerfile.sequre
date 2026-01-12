@@ -21,6 +21,8 @@ COPY sequre/stdlib /root/.codon/lib/codon/plugins/sequre/stdlib
 
 COPY example /workspace/example
 COPY sequre.sh /workspace/sequre.sh
+COPY target/debug/syqure /workspace/target/debug/syqure
+COPY bin/codon/lib/codon /workspace/target/debug/lib/codon
 
 ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
 
