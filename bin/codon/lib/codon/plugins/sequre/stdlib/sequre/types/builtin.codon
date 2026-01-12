@@ -36,9 +36,10 @@ class in_addr:
     s_addr: u32
 @tuple
 class sockaddr_in:
-    sin_family: i16
+    sin_family: u16
     sin_port: u16
     sin_addr: in_addr
+    sin_zero: u64
 @tuple
 class sockaddr_un:
     sun_family: int

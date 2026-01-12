@@ -1,6 +1,7 @@
 from sequre.constants import AF_UNIX, AF_INET, SOCK_STREAM
 from sequre.types.builtin import sockaddr_un, sockaddr_in, in_addr
 
+from internal.gc import sizeof
 from C import socket(int, int, int) -> int
 from C import bind(int, cobj, int) -> int
 from C import connect(int, cobj, int) -> int
@@ -46,7 +47,7 @@ class CSocket:
     def connect(self: CSocket) -> bool:
         if self.is_inet:
             inet_serveraddr = self.inet_serveraddr
-            connection = connect(self.sock_fd, __ptr__(inet_serveraddr).as_byte(), 64)
+            connection = connect(self.sock_fd, __ptr__(inet_serveraddr).as_byte(), sizeof(sockaddr_in))
         else:
             unix_serveraddr = self.unix_serveraddr
             connection = connect(self.sock_fd, __ptr__(unix_serveraddr).as_byte(), len(self.socket_address) + 2)
@@ -59,7 +60,7 @@ class CSocket:
     def bind(self: CSocket):
         if self.is_inet:
             inet_serveraddr = self.inet_serveraddr
-            rc = bind(self.sock_fd, __ptr__(inet_serveraddr).as_byte(), 64)
+            rc = bind(self.sock_fd, __ptr__(inet_serveraddr).as_byte(), sizeof(sockaddr_in))
         else:
             unix_serveraddr = self.unix_serveraddr
             rc = bind(self.sock_fd, __ptr__(unix_serveraddr).as_byte(), len(self.socket_address) + 2)
@@ -84,4 +85,4 @@ class CSocket:
         return serveraddr
     
     def _set_inet_serveraddr(self: CSocket, ip_address: str, port: str) -> sockaddr_in:
-        return sockaddr_in(i16(AF_INET), htons(u16(port)), in_addr(inet_addr(ip_address.c_str())))
+        return sockaddr_in(u16(AF_INET), htons(u16(port)), in_addr(inet_addr(ip_address.c_str())), u64(0))

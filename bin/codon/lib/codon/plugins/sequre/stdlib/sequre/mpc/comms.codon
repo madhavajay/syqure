@@ -282,7 +282,8 @@ class MPCComms[TP]:
 
             port = COMMUNICATION_PORT + offset_major + offset_minor
             if self.local:
-                self.sockets[pid] = CSocket(unix_file_address=f"{AF_UNIX_PREFIX}{port}")
+                ip_address = '0.0.0.0' if self.pid < pid else '127.0.0.1'
+                self.sockets[pid] = CSocket(ip_address=ip_address, port=str(port))
             else:
                 ip_address = '0.0.0.0' if self.pid < pid else CP_IPS[pid]
                 self.sockets[pid] = CSocket(ip_address=ip_address, port=str(port))
