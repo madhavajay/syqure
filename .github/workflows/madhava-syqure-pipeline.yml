@@ -24,6 +24,7 @@ jobs:
       CODON_ARTIFACT_DIR: ci/_artifacts/codon
       SEQURE_ARTIFACT_DIR: ci/_artifacts/sequre
       SYQURE_ARTIFACT_DIR: ci/_artifacts/syqure
+      CODON_LLVM_DIR: ci/_artifacts/codon-llvm
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout (with submodules)
@@ -47,9 +48,11 @@ jobs:
           CODON_SHA="$(git -C codon rev-parse HEAD)"
           SEQURE_SHA="$(git -C sequre rev-parse HEAD)"
           SYQURE_SHA="$(git rev-parse HEAD)"
+          LLVM_SHA="$(git ls-remote https://github.com/exaloop/llvm-project refs/heads/codon | awk '{print $1}')"
           echo "codon_sha=$CODON_SHA" >> "$GITHUB_OUTPUT"
           echo "sequre_sha=$SEQURE_SHA" >> "$GITHUB_OUTPUT"
           echo "syqure_sha=$SYQURE_SHA" >> "$GITHUB_OUTPUT"
+          echo "llvm_sha=$LLVM_SHA" >> "$GITHUB_OUTPUT"
 
           if [ -f ci/artifacts.json ]; then
             CODON_PREV_SHA="$(jq -r '.["linux-x86_64"].codon.sha // empty' ci/artifacts.json)"
@@ -126,8 +129,18 @@ jobs:
           zstd -dc "$CODON_TAR" | tar -C "$CODON_ARTIFACT_DIR/extract" -xf -
           echo "CODON_PATH=$CODON_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
 
+      - name: Restore Codon LLVM cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CODON_LLVM_DIR }}
+          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
+          restore-keys: |
+            codon-llvm-${{ runner.os }}-${{ runner.arch }}-
+
       - name: Build Sequre (if needed)
         if: steps.resolve.outputs.sequre_needs_build == 'true'
+        env:
+          LLVM_PATH: ${{ env.CODON_LLVM_DIR }}
         run: |
           CODON_PATH="$CODON_PATH" ./compile_sequre.sh
           mkdir -p "$SEQURE_ARTIFACT_DIR"
