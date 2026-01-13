@@ -2,10 +2,23 @@
   "linux-x86_64": {
     "codon": {
       "artifact": "codon-linux-x86_64-c1da4f92c309d20778777bb0383883ca0af14380",
-      "run_id": "20902278421",
+      "run_id": "20942238727",
       "sha": "c1da4f92c309d20778777bb0383883ca0af14380"
     },
-    "sequre": null,
-    "syqure": null
+    "llvm": {
+      "artifact": "codon-llvm-linux-x86_64-",
+      "run_id": "20942238727",
+      "sha": ""
+    },
+    "sequre": {
+      "artifact": "sequre-linux-x86_64-89c4731eba769e9e781013d436dd8f550b453078",
+      "run_id": "20942238727",
+      "sha": "89c4731eba769e9e781013d436dd8f550b453078"
+    },
+    "syqure": {
+      "artifact": "syqure-linux-x86_64-db0af6627add5f8bc12a1e2316fbc8f2f3f2b518",
+      "run_id": "20942238727",
+      "sha": "db0af6627add5f8bc12a1e2316fbc8f2f3f2b518"
+    }
   }
 }
