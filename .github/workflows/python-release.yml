@@ -38,7 +38,7 @@ jobs:
       - name: Get current version
         id: current
         run: |
-          CURRENT=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
+          CURRENT=$(cat VERSION)
           echo "version=${CURRENT}" >> $GITHUB_OUTPUT
           echo "Current version: ${CURRENT}"
 
@@ -79,8 +79,7 @@ jobs:
           VERSION="${{ steps.new.outputs.version }}"
           PY_VERSION="${{ steps.pyver.outputs.py_version }}"
 
-          sed -i.bak "0,/^version = .*/{s/^version = .*/version = \"${VERSION}\"/;}" Cargo.toml && rm Cargo.toml.bak
-          sed -i.bak "0,/^version = .*/{s/^version = .*/version = \"${VERSION}\"/;}" python/Cargo.toml && rm python/Cargo.toml.bak
+          python scripts/version_tools.py sync --version "$VERSION"
           sed -i.bak "s/^version = .*/version = \"${PY_VERSION}\"/" python/pyproject.toml && rm python/pyproject.toml.bak
 
       - name: Refresh Cargo.lock
@@ -90,7 +89,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml Cargo.lock python/Cargo.toml python/pyproject.toml
+          git add VERSION syqure/Cargo.toml python/Cargo.toml python/pyproject.toml Cargo.lock
           git commit -m "Bump python package version to ${{ steps.new.outputs.version }}"
           git tag "v${{ steps.new.outputs.version }}-py"
           git push origin HEAD:main --tags
