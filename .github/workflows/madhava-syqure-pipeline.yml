@@ -256,11 +256,8 @@ jobs:
             fi
             ZIP_PATH="$CODON_ARTIFACT_DIR/codon.zip"
             gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
-            python3 - <<'PY' "$ZIP_PATH" "$CODON_ARTIFACT_DIR"
-            import sys
-            import zipfile
-            zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-            PY
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$CODON_ARTIFACT_DIR"
             rm -f "$ZIP_PATH"
           fi
 
@@ -294,11 +291,8 @@ jobs:
             fi
             ZIP_PATH="$CODON_LLVM_DIR/llvm.zip"
             gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
-            python3 - <<'PY' "$ZIP_PATH" "$CODON_LLVM_DIR"
-            import sys
-            import zipfile
-            zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-            PY
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$CODON_LLVM_DIR"
             rm -f "$ZIP_PATH"
           fi
 
@@ -373,11 +367,8 @@ jobs:
             fi
             ZIP_PATH="$SEQURE_ARTIFACT_DIR/sequre.zip"
             gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
-            python3 - <<'PY' "$ZIP_PATH" "$SEQURE_ARTIFACT_DIR"
-            import sys
-            import zipfile
-            zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-            PY
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$SEQURE_ARTIFACT_DIR"
             rm -f "$ZIP_PATH"
           fi
 
@@ -421,11 +412,8 @@ jobs:
             fi
             ZIP_PATH="$SYQURE_ARTIFACT_DIR/syqure.zip"
             gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
-            python3 - <<'PY' "$ZIP_PATH" "$SYQURE_ARTIFACT_DIR"
-            import sys
-            import zipfile
-            zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-            PY
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$SYQURE_ARTIFACT_DIR"
             rm -f "$ZIP_PATH"
           fi
 
@@ -490,42 +478,14 @@ jobs:
           SYQURE_ARTIFACT="syqure-${PLATFORM}-${{ steps.resolve.outputs.syqure_sha }}"
           DOCKER_ARTIFACT="syqure-cli-${PLATFORM}-${{ steps.resolve.outputs.docker_sha }}"
 
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          path = Path("ci/artifacts.json")
-          data = {"linux-x86_64": {"codon": None, "sequre": None, "syqure": None, "llvm": None, "docker": None}}
-          if path.exists():
-              data = json.loads(path.read_text())
-          plat = data.setdefault("linux-x86_64", {})
-          plat["codon"] = {
-              "sha": "${{ steps.resolve.outputs.codon_sha }}",
-              "run_id": "${{ github.run_id }}",
-              "artifact": "codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}",
-          }
-          plat["llvm"] = {
-              "sha": "${{ steps.resolve.outputs.llvm_sha }}",
-              "run_id": "${{ github.run_id }}",
-              "artifact": "codon-llvm-${{ env.PLATFORM }}-${{ steps.resolve.outputs.llvm_sha }}",
-          }
-          plat["sequre"] = {
-              "sha": "${{ steps.resolve.outputs.sequre_sha }}",
-              "run_id": "${{ github.run_id }}",
-              "artifact": "sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}",
-          }
-          plat["syqure"] = {
-              "sha": "${{ steps.resolve.outputs.syqure_sha }}",
-              "run_id": "${{ github.run_id }}",
-              "artifact": "syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}",
-          }
-          plat["docker"] = {
-              "sha": "${{ steps.resolve.outputs.docker_sha }}",
-              "run_id": "${{ github.run_id }}",
-              "artifact": "syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}",
-          }
-          path.parent.mkdir(parents=True, exist_ok=True)
-          path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-          PY
+          python3 -c 'import json; from pathlib import Path; path=Path("ci/artifacts.json"); data={"linux-x86_64": {"codon": None, "sequre": None, "syqure": None, "llvm": None, "docker": None}}; \
+          data=json.loads(path.read_text()) if path.exists() else data; plat=data.setdefault("linux-x86_64", {}); \
+          plat["codon"]={"sha":"${{ steps.resolve.outputs.codon_sha }}","run_id":"${{ github.run_id }}","artifact":"codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}"}; \
+          plat["llvm"]={"sha":"${{ steps.resolve.outputs.llvm_sha }}","run_id":"${{ github.run_id }}","artifact":"codon-llvm-${{ env.PLATFORM }}-${{ steps.resolve.outputs.llvm_sha }}"}; \
+          plat["sequre"]={"sha":"${{ steps.resolve.outputs.sequre_sha }}","run_id":"${{ github.run_id }}","artifact":"sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}"}; \
+          plat["syqure"]={"sha":"${{ steps.resolve.outputs.syqure_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}"}; \
+          plat["docker"]={"sha":"${{ steps.resolve.outputs.docker_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}"}; \
+          path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\\n")'
 
       - name: Commit provenance
         if: |
