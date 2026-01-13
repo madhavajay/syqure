@@ -451,12 +451,7 @@ jobs:
           BUNDLE_PATH="$(pwd)/ci/_artifacts/syqure/extract/syqure/bundles/${TRIPLE}.tar.zst"
           CODON_INCLUDE="$(pwd)/ci/_artifacts/sequre/extract/codon/include"
           CODON_LIBS="$(pwd)/ci/_artifacts/sequre/extract/codon/lib/codon"
-          LLVM_HEADER="$(find "$(pwd)/ci/_artifacts/sequre/extract" -path "*/include/llvm/Support/Error.h" -print -quit || true)"
-          if [ -n "$LLVM_HEADER" ]; then
-            LLVM_INCLUDE="$(dirname "$(dirname "$LLVM_HEADER")")"
-          else
-            LLVM_INCLUDE=""
-          fi
+          LLVM_INCLUDE="$(pwd)/${CODON_LLVM_DIR}/install/include"
           if [ ! -f "$BUNDLE_PATH" ]; then
             echo "Missing bundle at $BUNDLE_PATH" >&2
             exit 1
@@ -469,14 +464,16 @@ jobs:
             echo "Missing Codon libs at $CODON_LIBS" >&2
             exit 1
           fi
+          if [ ! -d "$LLVM_INCLUDE" ]; then
+            echo "Missing LLVM headers at $LLVM_INCLUDE" >&2
+            exit 1
+          fi
           rm -rf python/syqure/lib
           mkdir -p "$PYTHON_ARTIFACT_DIR/dist"
           echo "SYQURE_BUNDLE_FILE=$BUNDLE_PATH" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$CODON_INCLUDE" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$CODON_LIBS" >> "$GITHUB_ENV"
-          if [ -n "$LLVM_INCLUDE" ]; then
-            echo "SYQURE_LLVM_INCLUDE=$LLVM_INCLUDE" >> "$GITHUB_ENV"
-          fi
+          echo "SYQURE_LLVM_INCLUDE=$LLVM_INCLUDE" >> "$GITHUB_ENV"
 
       - name: Build Python wheel (manylinux, if needed)
         if: steps.resolve.outputs.python_needs_build == 'true'
