@@ -84,6 +84,7 @@ jobs:
       CODON_ARTIFACT_DIR: ci/_artifacts/codon
       SEQURE_ARTIFACT_DIR: ci/_artifacts/sequre
       SYQURE_ARTIFACT_DIR: ci/_artifacts/syqure
+      PYTHON_ARTIFACT_DIR: ci/_artifacts/python
       CODON_LLVM_DIR: ci/_artifacts/codon-llvm
       LLVM_BRANCH: codon-17.0.6
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -100,7 +101,7 @@ jobs:
             clang lld cmake ninja-build pkg-config \
             zstd libzstd-dev libedit-dev libxml2-dev \
             python3 python3-venv python3-pip \
-            libfmt-dev \
+            libfmt-dev patchelf \
             libsodium-dev libssl-dev
 
       - name: Resolve provenance and build plan
@@ -110,12 +111,14 @@ jobs:
           CODON_SHA="$(git -C codon rev-parse HEAD)"
           SEQURE_SHA="$(git -C sequre rev-parse HEAD)"
           SYQURE_SHA="$(git rev-parse HEAD)"
+          PYTHON_SHA="$(printf '%s' "${SYQURE_SHA}${SEQURE_SHA}${CODON_SHA}" | sha1sum | awk '{print $1}')"
           LLVM_SHA="$(git ls-remote https://github.com/exaloop/llvm-project refs/heads/${LLVM_BRANCH} | awk '{print $1}')"
           VERSION="$(cat VERSION)"
           DOCKER_SHA="$SYQURE_SHA"
           echo "codon_sha=$CODON_SHA" >> "$GITHUB_OUTPUT"
           echo "sequre_sha=$SEQURE_SHA" >> "$GITHUB_OUTPUT"
           echo "syqure_sha=$SYQURE_SHA" >> "$GITHUB_OUTPUT"
+          echo "python_sha=$PYTHON_SHA" >> "$GITHUB_OUTPUT"
           echo "llvm_sha=$LLVM_SHA" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "docker_sha=$DOCKER_SHA" >> "$GITHUB_OUTPUT"
@@ -124,32 +127,38 @@ jobs:
             CODON_PREV_SHA="$(jq -r '.["linux-x86_64"].codon.sha // empty' ci/artifacts.json)"
             SEQURE_PREV_SHA="$(jq -r '.["linux-x86_64"].sequre.sha // empty' ci/artifacts.json)"
             SYQURE_PREV_SHA="$(jq -r '.["linux-x86_64"].syqure.sha // empty' ci/artifacts.json)"
+            PYTHON_PREV_SHA="$(jq -r '.["linux-x86_64"].python.sha // empty' ci/artifacts.json)"
             LLVM_PREV_SHA="$(jq -r '.["linux-x86_64"].llvm.sha // empty' ci/artifacts.json)"
             DOCKER_PREV_SHA="$(jq -r '.["linux-x86_64"].docker.sha // empty' ci/artifacts.json)"
             CODON_RUN_ID="$(jq -r '.["linux-x86_64"].codon.run_id // empty' ci/artifacts.json)"
             SEQURE_RUN_ID="$(jq -r '.["linux-x86_64"].sequre.run_id // empty' ci/artifacts.json)"
             SYQURE_RUN_ID="$(jq -r '.["linux-x86_64"].syqure.run_id // empty' ci/artifacts.json)"
+            PYTHON_RUN_ID="$(jq -r '.["linux-x86_64"].python.run_id // empty' ci/artifacts.json)"
             LLVM_RUN_ID="$(jq -r '.["linux-x86_64"].llvm.run_id // empty' ci/artifacts.json)"
             DOCKER_RUN_ID="$(jq -r '.["linux-x86_64"].docker.run_id // empty' ci/artifacts.json)"
             CODON_ARTIFACT="$(jq -r '.["linux-x86_64"].codon.artifact // empty' ci/artifacts.json)"
             SEQURE_ARTIFACT="$(jq -r '.["linux-x86_64"].sequre.artifact // empty' ci/artifacts.json)"
             SYQURE_ARTIFACT="$(jq -r '.["linux-x86_64"].syqure.artifact // empty' ci/artifacts.json)"
+            PYTHON_ARTIFACT="$(jq -r '.["linux-x86_64"].python.artifact // empty' ci/artifacts.json)"
             LLVM_ARTIFACT="$(jq -r '.["linux-x86_64"].llvm.artifact // empty' ci/artifacts.json)"
             DOCKER_ARTIFACT="$(jq -r '.["linux-x86_64"].docker.artifact // empty' ci/artifacts.json)"
           else
             CODON_PREV_SHA=""
             SEQURE_PREV_SHA=""
             SYQURE_PREV_SHA=""
+            PYTHON_PREV_SHA=""
             LLVM_PREV_SHA=""
             DOCKER_PREV_SHA=""
             CODON_RUN_ID=""
             SEQURE_RUN_ID=""
             SYQURE_RUN_ID=""
+            PYTHON_RUN_ID=""
             LLVM_RUN_ID=""
             DOCKER_RUN_ID=""
             CODON_ARTIFACT=""
             SEQURE_ARTIFACT=""
             SYQURE_ARTIFACT=""
+            PYTHON_ARTIFACT=""
             LLVM_ARTIFACT=""
             DOCKER_ARTIFACT=""
           fi
@@ -183,6 +192,10 @@ jobs:
             SYQURE_ARTIFACT="syqure-${PLATFORM}-${SYQURE_SHA}"
           fi
           SYQURE_RUN_ID="$(lookup_run_id "$SYQURE_ARTIFACT")"
+          if [ -z "$PYTHON_ARTIFACT" ]; then
+            PYTHON_ARTIFACT="syqure-python-${PLATFORM}-${PYTHON_SHA}"
+          fi
+          PYTHON_RUN_ID="$(lookup_run_id "$PYTHON_ARTIFACT")"
           if [ -z "$DOCKER_ARTIFACT" ]; then
             DOCKER_ARTIFACT="syqure-cli-${PLATFORM}-${DOCKER_SHA}"
           fi
@@ -191,6 +204,7 @@ jobs:
           CODON_NEEDS_BUILD="false"
           SEQURE_NEEDS_BUILD="false"
           SYQURE_NEEDS_BUILD="false"
+          PYTHON_NEEDS_BUILD="false"
           LLVM_NEEDS_BUILD="false"
           DOCKER_NEEDS_BUILD="false"
 
@@ -206,6 +220,9 @@ jobs:
           if [ "$SYQURE_PREV_SHA" != "$SYQURE_SHA" ] || [ -z "$SYQURE_RUN_ID" ] || [ -z "$SYQURE_ARTIFACT" ] || [ "$SEQURE_NEEDS_BUILD" = "true" ]; then
             SYQURE_NEEDS_BUILD="true"
           fi
+          if [ "$PYTHON_PREV_SHA" != "$PYTHON_SHA" ] || [ -z "$PYTHON_RUN_ID" ] || [ -z "$PYTHON_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
+            PYTHON_NEEDS_BUILD="true"
+          fi
           if [ "$DOCKER_PREV_SHA" != "$DOCKER_SHA" ] || [ -z "$DOCKER_RUN_ID" ] || [ -z "$DOCKER_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
             DOCKER_NEEDS_BUILD="true"
           fi
@@ -213,16 +230,19 @@ jobs:
           echo "codon_needs_build=$CODON_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
           echo "sequre_needs_build=$SEQURE_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
           echo "syqure_needs_build=$SYQURE_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "python_needs_build=$PYTHON_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
           echo "llvm_needs_build=$LLVM_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
           echo "docker_needs_build=$DOCKER_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
           echo "codon_run_id=$CODON_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "sequre_run_id=$SEQURE_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "syqure_run_id=$SYQURE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "python_run_id=$PYTHON_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "llvm_run_id=$LLVM_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "docker_run_id=$DOCKER_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "codon_artifact=$CODON_ARTIFACT" >> "$GITHUB_OUTPUT"
           echo "sequre_artifact=$SEQURE_ARTIFACT" >> "$GITHUB_OUTPUT"
           echo "syqure_artifact=$SYQURE_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "python_artifact=$PYTHON_ARTIFACT" >> "$GITHUB_OUTPUT"
           echo "llvm_artifact=$LLVM_ARTIFACT" >> "$GITHUB_OUTPUT"
           echo "docker_artifact=$DOCKER_ARTIFACT" >> "$GITHUB_OUTPUT"
 
@@ -423,6 +443,27 @@ jobs:
           mkdir -p "$SYQURE_ARTIFACT_DIR/extract"
           zstd -dc "$SYQURE_TAR" | tar -C "$SYQURE_ARTIFACT_DIR/extract" -xf -
 
+      - name: Build Python wheel (if needed)
+        if: steps.resolve.outputs.python_needs_build == 'true'
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "maturin>=1.6,<2.0"
+          TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
+          export SYQURE_BUNDLE_FILE="$SYQURE_ARTIFACT_DIR/extract/syqure/bundles/${TRIPLE}.tar.zst"
+          rm -rf python/syqure/lib
+          mkdir -p "$PYTHON_ARTIFACT_DIR/dist"
+          maturin build --release --compatibility manylinux_2_28 \
+            --manifest-path python/Cargo.toml --out "$PYTHON_ARTIFACT_DIR/dist"
+
+      - name: Upload Python wheel artifact
+        if: steps.resolve.outputs.python_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: syqure-python-${{ env.PLATFORM }}-${{ steps.resolve.outputs.python_sha }}
+          path: ${{ env.PYTHON_ARTIFACT_DIR }}/dist/*.whl
+          retention-days: 30
+
       - name: Build and publish Docker image (if needed)
         if: steps.resolve.outputs.docker_needs_build == 'true'
         env:
@@ -469,6 +510,7 @@ jobs:
           steps.resolve.outputs.llvm_needs_build == 'true' ||
           steps.resolve.outputs.sequre_needs_build == 'true' ||
           steps.resolve.outputs.syqure_needs_build == 'true' ||
+          steps.resolve.outputs.python_needs_build == 'true' ||
           steps.resolve.outputs.docker_needs_build == 'true'
         run: |
           set -euo pipefail
@@ -476,14 +518,16 @@ jobs:
           LLVM_ARTIFACT="codon-llvm-${PLATFORM}-${{ steps.resolve.outputs.llvm_sha }}"
           SEQURE_ARTIFACT="sequre-${PLATFORM}-${{ steps.resolve.outputs.sequre_sha }}"
           SYQURE_ARTIFACT="syqure-${PLATFORM}-${{ steps.resolve.outputs.syqure_sha }}"
+          PYTHON_ARTIFACT="syqure-python-${PLATFORM}-${{ steps.resolve.outputs.python_sha }}"
           DOCKER_ARTIFACT="syqure-cli-${PLATFORM}-${{ steps.resolve.outputs.docker_sha }}"
 
-          python3 -c 'import json; from pathlib import Path; path=Path("ci/artifacts.json"); data={"linux-x86_64": {"codon": None, "sequre": None, "syqure": None, "llvm": None, "docker": None}}; \
+          python3 -c 'import json; from pathlib import Path; path=Path("ci/artifacts.json"); data={"linux-x86_64": {"codon": None, "sequre": None, "syqure": None, "python": None, "llvm": None, "docker": None}}; \
           data=json.loads(path.read_text()) if path.exists() else data; plat=data.setdefault("linux-x86_64", {}); \
           plat["codon"]={"sha":"${{ steps.resolve.outputs.codon_sha }}","run_id":"${{ github.run_id }}","artifact":"codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}"}; \
           plat["llvm"]={"sha":"${{ steps.resolve.outputs.llvm_sha }}","run_id":"${{ github.run_id }}","artifact":"codon-llvm-${{ env.PLATFORM }}-${{ steps.resolve.outputs.llvm_sha }}"}; \
           plat["sequre"]={"sha":"${{ steps.resolve.outputs.sequre_sha }}","run_id":"${{ github.run_id }}","artifact":"sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}"}; \
           plat["syqure"]={"sha":"${{ steps.resolve.outputs.syqure_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}"}; \
+          plat["python"]={"sha":"${{ steps.resolve.outputs.python_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-python-${{ env.PLATFORM }}-${{ steps.resolve.outputs.python_sha }}"}; \
           plat["docker"]={"sha":"${{ steps.resolve.outputs.docker_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}"}; \
           path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\\n")'
 
@@ -493,6 +537,7 @@ jobs:
           steps.resolve.outputs.llvm_needs_build == 'true' ||
           steps.resolve.outputs.sequre_needs_build == 'true' ||
           steps.resolve.outputs.syqure_needs_build == 'true' ||
+          steps.resolve.outputs.python_needs_build == 'true' ||
           steps.resolve.outputs.docker_needs_build == 'true'
         run: |
           git config user.name "github-actions"
