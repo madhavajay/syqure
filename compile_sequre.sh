@@ -15,6 +15,7 @@ if [[ -z "$CODON_SOURCE_DIR" && -d "$ROOT_DIR/codon" ]]; then
   CODON_SOURCE_DIR="$ROOT_DIR/codon"
 fi
 LLVM_PATH="${LLVM_PATH:-$SEQURE_PATH/codon-llvm}"
+LLVM_BRANCH="${LLVM_BRANCH:-codon-17.0.6}"
 SEQ_PATH="${SEQ_PATH:-$SEQURE_PATH/codon-seq}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 BUILD_SEQ="${BUILD_SEQ:-0}"
@@ -31,6 +32,7 @@ echo "  SEQURE_PATH=$SEQURE_PATH"
 echo "  CODON_PATH=$CODON_PATH"
 echo "  CODON_SOURCE_DIR=${CODON_SOURCE_DIR:-<unset>}"
 echo "  LLVM_PATH=$LLVM_PATH"
+echo "  LLVM_BRANCH=$LLVM_BRANCH"
 echo "  SEQ_PATH=$SEQ_PATH"
 echo "  BUILD_TYPE=$BUILD_TYPE"
 echo "  BUILD_SEQ=$BUILD_SEQ"
@@ -94,7 +96,7 @@ if [[ -d "$LLVM_PATH/install/lib/cmake/llvm" ]]; then
 else
   echo "LLVM not installed. Building Codon LLVM..."
   rm -rf "$LLVM_PATH"
-  git clone --depth 1 -b codon https://github.com/exaloop/llvm-project "$LLVM_PATH"
+  git clone --depth 1 -b "$LLVM_BRANCH" https://github.com/exaloop/llvm-project "$LLVM_PATH"
   cmake -S "$LLVM_PATH/llvm" -B "$LLVM_PATH/build" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_INCLUDE_TESTS=OFF \

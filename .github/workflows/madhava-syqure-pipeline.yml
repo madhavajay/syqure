@@ -84,6 +84,7 @@ jobs:
       SEQURE_ARTIFACT_DIR: ci/_artifacts/sequre
       SYQURE_ARTIFACT_DIR: ci/_artifacts/syqure
       CODON_LLVM_DIR: ci/_artifacts/codon-llvm
+      LLVM_BRANCH: codon-17.0.6
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout (with submodules)
@@ -108,7 +109,7 @@ jobs:
           CODON_SHA="$(git -C codon rev-parse HEAD)"
           SEQURE_SHA="$(git -C sequre rev-parse HEAD)"
           SYQURE_SHA="$(git rev-parse HEAD)"
-          LLVM_SHA="$(git ls-remote https://github.com/exaloop/llvm-project refs/heads/codon | awk '{print $1}')"
+          LLVM_SHA="$(git ls-remote https://github.com/exaloop/llvm-project refs/heads/${LLVM_BRANCH} | awk '{print $1}')"
           echo "codon_sha=$CODON_SHA" >> "$GITHUB_OUTPUT"
           echo "sequre_sha=$SEQURE_SHA" >> "$GITHUB_OUTPUT"
           echo "syqure_sha=$SYQURE_SHA" >> "$GITHUB_OUTPUT"
@@ -230,7 +231,7 @@ jobs:
             echo "Cached LLVM missing libLLVM.so; rebuilding with LLVM_BUILD_LLVM_DYLIB=ON"
           fi
           rm -rf "${CODON_LLVM_DIR}"
-          git clone --depth 1 -b codon https://github.com/exaloop/llvm-project "${CODON_LLVM_DIR}"
+          git clone --depth 1 -b "${LLVM_BRANCH}" https://github.com/exaloop/llvm-project "${CODON_LLVM_DIR}"
           cmake -S "${CODON_LLVM_DIR}/llvm" -B "${CODON_LLVM_DIR}/build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DLLVM_INCLUDE_TESTS=OFF \
