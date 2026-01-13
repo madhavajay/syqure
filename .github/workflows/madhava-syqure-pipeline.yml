@@ -253,10 +253,10 @@ jobs:
             ZIP_PATH="$CODON_ARTIFACT_DIR/codon.zip"
             gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
             python3 - <<'PY' "$ZIP_PATH" "$CODON_ARTIFACT_DIR"
-import sys
-import zipfile
-zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-PY
+            import sys
+            import zipfile
+            zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+            PY
             rm -f "$ZIP_PATH"
           fi
 
@@ -291,10 +291,10 @@ PY
             ZIP_PATH="$CODON_LLVM_DIR/llvm.zip"
             gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
             python3 - <<'PY' "$ZIP_PATH" "$CODON_LLVM_DIR"
-import sys
-import zipfile
-zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-PY
+            import sys
+            import zipfile
+            zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+            PY
             rm -f "$ZIP_PATH"
           fi
 
@@ -370,10 +370,10 @@ PY
             ZIP_PATH="$SEQURE_ARTIFACT_DIR/sequre.zip"
             gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
             python3 - <<'PY' "$ZIP_PATH" "$SEQURE_ARTIFACT_DIR"
-import sys
-import zipfile
-zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-PY
+            import sys
+            import zipfile
+            zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+            PY
             rm -f "$ZIP_PATH"
           fi
 
@@ -418,10 +418,10 @@ PY
             ZIP_PATH="$SYQURE_ARTIFACT_DIR/syqure.zip"
             gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
             python3 - <<'PY' "$ZIP_PATH" "$SYQURE_ARTIFACT_DIR"
-import sys
-import zipfile
-zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
-PY
+            import sys
+            import zipfile
+            zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+            PY
             rm -f "$ZIP_PATH"
           fi
 
