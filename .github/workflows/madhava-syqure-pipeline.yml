@@ -443,23 +443,30 @@ jobs:
           mkdir -p "$SYQURE_ARTIFACT_DIR/extract"
           zstd -dc "$SYQURE_TAR" | tar -C "$SYQURE_ARTIFACT_DIR/extract" -xf -
 
-      - name: Build Python wheel (if needed)
+      - name: Prepare Python wheel build (if needed)
         if: steps.resolve.outputs.python_needs_build == 'true'
         run: |
           set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install "maturin>=1.6,<2.0"
           TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
-          BUNDLE_PATH="$(pwd)/$SYQURE_ARTIFACT_DIR/extract/syqure/bundles/${TRIPLE}.tar.zst"
-          if [ ! -f "$BUNDLE_PATH" ]; then
-            echo "Missing bundle at $BUNDLE_PATH" >&2
+          BUNDLE_REL="ci/_artifacts/syqure/extract/syqure/bundles/${TRIPLE}.tar.zst"
+          if [ ! -f "$BUNDLE_REL" ]; then
+            echo "Missing bundle at $(pwd)/$BUNDLE_REL" >&2
             exit 1
           fi
-          export SYQURE_BUNDLE_FILE="$BUNDLE_PATH"
           rm -rf python/syqure/lib
           mkdir -p "$PYTHON_ARTIFACT_DIR/dist"
-          maturin build --release --compatibility manylinux_2_28 \
-            --manifest-path python/Cargo.toml --out "$PYTHON_ARTIFACT_DIR/dist"
+          echo "SYQURE_BUNDLE_FILE=/io/${BUNDLE_REL}" >> "$GITHUB_ENV"
+
+      - name: Build Python wheel (manylinux, if needed)
+        if: steps.resolve.outputs.python_needs_build == 'true'
+        uses: PyO3/maturin-action@v1
+        env:
+          SYQURE_BUNDLE_FILE: ${{ env.SYQURE_BUNDLE_FILE }}
+        with:
+          manylinux: "2_28"
+          python-version: "3.10"
+          args: --release --manifest-path python/Cargo.toml --out ${{ env.PYTHON_ARTIFACT_DIR }}/dist
+          before-build: yum install -y zstd
 
       - name: Upload Python wheel artifact
         if: steps.resolve.outputs.python_needs_build == 'true'
