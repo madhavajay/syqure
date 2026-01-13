@@ -166,33 +166,23 @@ jobs:
           if [ -z "$CODON_ARTIFACT" ]; then
             CODON_ARTIFACT="codon-${PLATFORM}-${CODON_SHA}"
           fi
-          if [ -z "$CODON_RUN_ID" ]; then
-            CODON_RUN_ID="$(lookup_run_id "$CODON_ARTIFACT")"
-          fi
+          CODON_RUN_ID="$(lookup_run_id "$CODON_ARTIFACT")"
           if [ -z "$LLVM_ARTIFACT" ]; then
             LLVM_ARTIFACT="codon-llvm-${PLATFORM}-${LLVM_SHA}"
           fi
-          if [ -z "$LLVM_RUN_ID" ]; then
-            LLVM_RUN_ID="$(lookup_run_id "$LLVM_ARTIFACT")"
-          fi
+          LLVM_RUN_ID="$(lookup_run_id "$LLVM_ARTIFACT")"
           if [ -z "$SEQURE_ARTIFACT" ]; then
             SEQURE_ARTIFACT="sequre-${PLATFORM}-${SEQURE_SHA}"
           fi
-          if [ -z "$SEQURE_RUN_ID" ]; then
-            SEQURE_RUN_ID="$(lookup_run_id "$SEQURE_ARTIFACT")"
-          fi
+          SEQURE_RUN_ID="$(lookup_run_id "$SEQURE_ARTIFACT")"
           if [ -z "$SYQURE_ARTIFACT" ]; then
             SYQURE_ARTIFACT="syqure-${PLATFORM}-${SYQURE_SHA}"
           fi
-          if [ -z "$SYQURE_RUN_ID" ]; then
-            SYQURE_RUN_ID="$(lookup_run_id "$SYQURE_ARTIFACT")"
-          fi
+          SYQURE_RUN_ID="$(lookup_run_id "$SYQURE_ARTIFACT")"
           if [ -z "$DOCKER_ARTIFACT" ]; then
             DOCKER_ARTIFACT="syqure-cli-${PLATFORM}-${DOCKER_SHA}"
           fi
-          if [ -z "$DOCKER_RUN_ID" ]; then
-            DOCKER_RUN_ID="$(lookup_run_id "$DOCKER_ARTIFACT")"
-          fi
+          DOCKER_RUN_ID="$(lookup_run_id "$DOCKER_ARTIFACT")"
 
           CODON_NEEDS_BUILD="false"
           SEQURE_NEEDS_BUILD="false"
@@ -252,7 +242,23 @@ jobs:
         if: steps.resolve.outputs.codon_needs_build != 'true'
         run: |
           mkdir -p "$CODON_ARTIFACT_DIR"
-          gh run download "${{ steps.resolve.outputs.codon_run_id }}" -n "${{ steps.resolve.outputs.codon_artifact }}" -D "$CODON_ARTIFACT_DIR"
+          if ! gh run download "${{ steps.resolve.outputs.codon_run_id }}" -n "${{ steps.resolve.outputs.codon_artifact }}" -D "$CODON_ARTIFACT_DIR"; then
+            echo "Cached Codon artifact missing; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.codon_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "Codon artifact not found." >&2
+              exit 1
+            fi
+            ZIP_PATH="$CODON_ARTIFACT_DIR/codon.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 - <<'PY' "$ZIP_PATH" "$CODON_ARTIFACT_DIR"
+import sys
+import zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+PY
+            rm -f "$ZIP_PATH"
+          fi
 
       - name: Extract Codon artifact
         run: |
@@ -275,7 +281,21 @@ jobs:
         run: |
           mkdir -p "$CODON_LLVM_DIR"
           if ! gh run download "${{ steps.resolve.outputs.llvm_run_id }}" -n "${{ steps.resolve.outputs.llvm_artifact }}" -D "$CODON_LLVM_DIR"; then
-            echo "LLVM artifact download failed; continuing with cache/build." >&2
+            echo "LLVM artifact download failed; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.llvm_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "LLVM artifact not found; continuing with cache/build." >&2
+              exit 0
+            fi
+            ZIP_PATH="$CODON_LLVM_DIR/llvm.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 - <<'PY' "$ZIP_PATH" "$CODON_LLVM_DIR"
+import sys
+import zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+PY
+            rm -f "$ZIP_PATH"
           fi
 
       - name: Build Codon LLVM (cached)
@@ -339,7 +359,23 @@ jobs:
         if: steps.resolve.outputs.sequre_needs_build != 'true'
         run: |
           mkdir -p "$SEQURE_ARTIFACT_DIR"
-          gh run download "${{ steps.resolve.outputs.sequre_run_id }}" -n "${{ steps.resolve.outputs.sequre_artifact }}" -D "$SEQURE_ARTIFACT_DIR"
+          if ! gh run download "${{ steps.resolve.outputs.sequre_run_id }}" -n "${{ steps.resolve.outputs.sequre_artifact }}" -D "$SEQURE_ARTIFACT_DIR"; then
+            echo "Cached Sequre artifact missing; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.sequre_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "Sequre artifact not found." >&2
+              exit 1
+            fi
+            ZIP_PATH="$SEQURE_ARTIFACT_DIR/sequre.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 - <<'PY' "$ZIP_PATH" "$SEQURE_ARTIFACT_DIR"
+import sys
+import zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+PY
+            rm -f "$ZIP_PATH"
+          fi
 
       - name: Extract Sequre artifact
         run: |
@@ -371,7 +407,23 @@ jobs:
         if: steps.resolve.outputs.syqure_needs_build != 'true'
         run: |
           mkdir -p "$SYQURE_ARTIFACT_DIR"
-          gh run download "${{ steps.resolve.outputs.syqure_run_id }}" -n "${{ steps.resolve.outputs.syqure_artifact }}" -D "$SYQURE_ARTIFACT_DIR"
+          if ! gh run download "${{ steps.resolve.outputs.syqure_run_id }}" -n "${{ steps.resolve.outputs.syqure_artifact }}" -D "$SYQURE_ARTIFACT_DIR"; then
+            echo "Cached Syqure artifact missing; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.syqure_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "Syqure artifact not found." >&2
+              exit 1
+            fi
+            ZIP_PATH="$SYQURE_ARTIFACT_DIR/syqure.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 - <<'PY' "$ZIP_PATH" "$SYQURE_ARTIFACT_DIR"
+import sys
+import zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+PY
+            rm -f "$ZIP_PATH"
+          fi
 
       - name: Extract Syqure artifact
         run: |
