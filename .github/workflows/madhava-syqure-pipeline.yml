@@ -481,9 +481,10 @@ jobs:
           args: --release --manifest-path python/Cargo.toml --out ${{ env.PYTHON_ARTIFACT_DIR }}/dist
           before-script-linux: |
             set -euo pipefail
-            yum install -y epel-release
-            dnf config-manager --set-enabled powertools || yum config-manager --set-enabled powertools || true
-            yum install -y zstd fmt-devel
+            yum install -y zstd cmake gcc-c++
+            curl -L https://github.com/fmtlib/fmt/archive/refs/tags/10.2.1.tar.gz | tar xz
+            cmake -S fmt-10.2.1 -B fmt-10.2.1/build -DFMT_TEST=OFF -DFMT_DOC=OFF
+            cmake --build fmt-10.2.1/build --target install
 
       - name: Upload Python wheel artifact
         if: steps.resolve.outputs.python_needs_build == 'true'
