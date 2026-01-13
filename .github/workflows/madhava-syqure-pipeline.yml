@@ -1,8 +1,13 @@
-name: Syqure Multistage (linux-x86_64)
+name: Syqure Multistage
 
 on:
   workflow_dispatch:
   push:
+    branches:
+      - madhava/syqure
+    paths-ignore:
+      - "ci/artifacts.json"
+  pull_request:
     branches:
       - madhava/syqure
     paths-ignore:
@@ -14,7 +19,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: syqure-linux-x86_64-${{ github.ref }}
+  group: syqure-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -81,12 +86,15 @@ jobs:
     needs: configure-sequre
     env:
       PLATFORM: linux-x86_64
+      BIN_DIR: bin/linux-x86
+      BUILD_DOCKER: "true"
       CODON_ARTIFACT_DIR: ci/_artifacts/codon
       SEQURE_ARTIFACT_DIR: ci/_artifacts/sequre
       SYQURE_ARTIFACT_DIR: ci/_artifacts/syqure
       PYTHON_ARTIFACT_DIR: ci/_artifacts/python
       CODON_LLVM_DIR: ci/_artifacts/codon-llvm
       LLVM_BRANCH: codon-17.0.6
+      LLVM_TARGETS: all
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout (with submodules)
@@ -102,7 +110,7 @@ jobs:
             zstd libzstd-dev libedit-dev libxml2-dev \
             python3 python3-venv python3-pip \
             libfmt-dev patchelf \
-            libsodium-dev libssl-dev
+            libsodium-dev libssl-dev libgmp-dev
 
       - name: Resolve provenance and build plan
         id: resolve
@@ -115,6 +123,7 @@ jobs:
           LLVM_SHA="$(git ls-remote https://github.com/exaloop/llvm-project refs/heads/${LLVM_BRANCH} | awk '{print $1}')"
           VERSION="$(cat VERSION)"
           DOCKER_SHA="$SYQURE_SHA"
+          BUILD_DOCKER="${BUILD_DOCKER:-true}"
           echo "codon_sha=$CODON_SHA" >> "$GITHUB_OUTPUT"
           echo "sequre_sha=$SEQURE_SHA" >> "$GITHUB_OUTPUT"
           echo "syqure_sha=$SYQURE_SHA" >> "$GITHUB_OUTPUT"
@@ -124,24 +133,24 @@ jobs:
           echo "docker_sha=$DOCKER_SHA" >> "$GITHUB_OUTPUT"
 
           if [ -f ci/artifacts.json ]; then
-            CODON_PREV_SHA="$(jq -r '.["linux-x86_64"].codon.sha // empty' ci/artifacts.json)"
-            SEQURE_PREV_SHA="$(jq -r '.["linux-x86_64"].sequre.sha // empty' ci/artifacts.json)"
-            SYQURE_PREV_SHA="$(jq -r '.["linux-x86_64"].syqure.sha // empty' ci/artifacts.json)"
-            PYTHON_PREV_SHA="$(jq -r '.["linux-x86_64"].python.sha // empty' ci/artifacts.json)"
-            LLVM_PREV_SHA="$(jq -r '.["linux-x86_64"].llvm.sha // empty' ci/artifacts.json)"
-            DOCKER_PREV_SHA="$(jq -r '.["linux-x86_64"].docker.sha // empty' ci/artifacts.json)"
-            CODON_RUN_ID="$(jq -r '.["linux-x86_64"].codon.run_id // empty' ci/artifacts.json)"
-            SEQURE_RUN_ID="$(jq -r '.["linux-x86_64"].sequre.run_id // empty' ci/artifacts.json)"
-            SYQURE_RUN_ID="$(jq -r '.["linux-x86_64"].syqure.run_id // empty' ci/artifacts.json)"
-            PYTHON_RUN_ID="$(jq -r '.["linux-x86_64"].python.run_id // empty' ci/artifacts.json)"
-            LLVM_RUN_ID="$(jq -r '.["linux-x86_64"].llvm.run_id // empty' ci/artifacts.json)"
-            DOCKER_RUN_ID="$(jq -r '.["linux-x86_64"].docker.run_id // empty' ci/artifacts.json)"
-            CODON_ARTIFACT="$(jq -r '.["linux-x86_64"].codon.artifact // empty' ci/artifacts.json)"
-            SEQURE_ARTIFACT="$(jq -r '.["linux-x86_64"].sequre.artifact // empty' ci/artifacts.json)"
-            SYQURE_ARTIFACT="$(jq -r '.["linux-x86_64"].syqure.artifact // empty' ci/artifacts.json)"
-            PYTHON_ARTIFACT="$(jq -r '.["linux-x86_64"].python.artifact // empty' ci/artifacts.json)"
-            LLVM_ARTIFACT="$(jq -r '.["linux-x86_64"].llvm.artifact // empty' ci/artifacts.json)"
-            DOCKER_ARTIFACT="$(jq -r '.["linux-x86_64"].docker.artifact // empty' ci/artifacts.json)"
+            CODON_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].codon.sha // empty' ci/artifacts.json)"
+            SEQURE_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].sequre.sha // empty' ci/artifacts.json)"
+            SYQURE_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].syqure.sha // empty' ci/artifacts.json)"
+            PYTHON_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].python.sha // empty' ci/artifacts.json)"
+            LLVM_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].llvm.sha // empty' ci/artifacts.json)"
+            DOCKER_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].docker.sha // empty' ci/artifacts.json)"
+            CODON_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].codon.run_id // empty' ci/artifacts.json)"
+            SEQURE_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].sequre.run_id // empty' ci/artifacts.json)"
+            SYQURE_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].syqure.run_id // empty' ci/artifacts.json)"
+            PYTHON_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].python.run_id // empty' ci/artifacts.json)"
+            LLVM_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].llvm.run_id // empty' ci/artifacts.json)"
+            DOCKER_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].docker.run_id // empty' ci/artifacts.json)"
+            CODON_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].codon.artifact // empty' ci/artifacts.json)"
+            SEQURE_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].sequre.artifact // empty' ci/artifacts.json)"
+            SYQURE_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].syqure.artifact // empty' ci/artifacts.json)"
+            PYTHON_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].python.artifact // empty' ci/artifacts.json)"
+            LLVM_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].llvm.artifact // empty' ci/artifacts.json)"
+            DOCKER_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].docker.artifact // empty' ci/artifacts.json)"
           else
             CODON_PREV_SHA=""
             SEQURE_PREV_SHA=""
@@ -223,8 +232,12 @@ jobs:
           if [ "$PYTHON_PREV_SHA" != "$PYTHON_SHA" ] || [ -z "$PYTHON_RUN_ID" ] || [ -z "$PYTHON_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
             PYTHON_NEEDS_BUILD="true"
           fi
-          if [ "$DOCKER_PREV_SHA" != "$DOCKER_SHA" ] || [ -z "$DOCKER_RUN_ID" ] || [ -z "$DOCKER_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
-            DOCKER_NEEDS_BUILD="true"
+          if [ "$BUILD_DOCKER" = "true" ]; then
+            if [ "$DOCKER_PREV_SHA" != "$DOCKER_SHA" ] || [ -z "$DOCKER_RUN_ID" ] || [ -z "$DOCKER_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
+              DOCKER_NEEDS_BUILD="true"
+            fi
+          else
+            DOCKER_NEEDS_BUILD="false"
           fi
 
           echo "codon_needs_build=$CODON_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
@@ -246,13 +259,95 @@ jobs:
           echo "llvm_artifact=$LLVM_ARTIFACT" >> "$GITHUB_OUTPUT"
           echo "docker_artifact=$DOCKER_ARTIFACT" >> "$GITHUB_OUTPUT"
 
+      - name: Restore Codon LLVM cache
+        id: llvm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CODON_LLVM_DIR }}
+          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
+          restore-keys: |
+            codon-llvm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Download Codon LLVM artifact (cached)
+        if: steps.resolve.outputs.llvm_needs_build != 'true'
+        run: |
+          mkdir -p "$CODON_LLVM_DIR"
+          if ! gh run download "${{ steps.resolve.outputs.llvm_run_id }}" -n "${{ steps.resolve.outputs.llvm_artifact }}" -D "$CODON_LLVM_DIR"; then
+            echo "LLVM artifact download failed; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.llvm_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "LLVM artifact not found; continuing with cache/build." >&2
+              exit 0
+            fi
+            ZIP_PATH="$CODON_LLVM_DIR/llvm.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$CODON_LLVM_DIR"
+            rm -f "$ZIP_PATH"
+          fi
+
+      - name: Build Codon LLVM (cached)
+        run: |
+          set -euo pipefail
+          OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          LLVM_SHARED_GLOB="libLLVM*.so*"
+          CMAKE_OSX_ARGS=()
+          if [ "$OS_NAME" = "darwin" ]; then
+            LLVM_SHARED_GLOB="libLLVM*.dylib"
+            CMAKE_OSX_ARGS=(-DCMAKE_OSX_ARCHITECTURES=arm64)
+            if [ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
+              CMAKE_OSX_ARGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET")
+            fi
+          fi
+          LLVM_TARGETS="${LLVM_TARGETS:-all}"
+          if [ -d "${CODON_LLVM_DIR}/install/lib/cmake/llvm" ]; then
+            if ls "${CODON_LLVM_DIR}/install/lib"/$LLVM_SHARED_GLOB >/dev/null 2>&1; then
+              echo "Using cached Codon LLVM at ${CODON_LLVM_DIR}"
+              exit 0
+            fi
+            echo "Cached LLVM missing shared libLLVM; rebuilding with LLVM_BUILD_LLVM_DYLIB=ON"
+          fi
+          rm -rf "${CODON_LLVM_DIR}"
+          git clone --depth 1 -b "${LLVM_BRANCH}" https://github.com/exaloop/llvm-project "${CODON_LLVM_DIR}"
+          cmake -S "${CODON_LLVM_DIR}/llvm" -B "${CODON_LLVM_DIR}/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_ENABLE_RTTI=ON \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_BUILD_LLVM_DYLIB=ON \
+            -DLLVM_LINK_LLVM_DYLIB=ON \
+            -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGETS" \
+            "${CMAKE_OSX_ARGS[@]}" \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build "${CODON_LLVM_DIR}/build"
+          cmake --install "${CODON_LLVM_DIR}/build" --prefix "${CODON_LLVM_DIR}/install"
+
+      - name: Save Codon LLVM cache
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CODON_LLVM_DIR }}
+          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
+
+      - name: Upload Codon LLVM artifact
+        if: steps.resolve.outputs.llvm_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codon-llvm-${{ env.PLATFORM }}-${{ steps.resolve.outputs.llvm_sha }}
+          path: ${{ env.CODON_LLVM_DIR }}/install
+          retention-days: 30
+
       - name: Build Codon (if needed)
         if: steps.resolve.outputs.codon_needs_build == 'true'
         run: |
+          export LLVM_OVERRIDE="$CODON_LLVM_DIR/install/lib/cmake/llvm"
           export CODON_ENABLE_OPENMP=OFF
           ./compile_codon_linux.sh
           mkdir -p "$CODON_ARTIFACT_DIR"
-          tar -C bin -c codon | zstd -19 -o "$CODON_ARTIFACT_DIR/codon-${PLATFORM}-${{ steps.resolve.outputs.codon_sha }}.tar.zst"
+          tar -C "$BIN_DIR" -c codon | zstd -19 -o "$CODON_ARTIFACT_DIR/codon-${PLATFORM}-${{ steps.resolve.outputs.codon_sha }}.tar.zst"
 
       - name: Upload Codon artifact
         if: steps.resolve.outputs.codon_needs_build == 'true'
@@ -287,75 +382,6 @@ jobs:
           mkdir -p "$CODON_ARTIFACT_DIR/extract"
           zstd -dc "$CODON_TAR" | tar -C "$CODON_ARTIFACT_DIR/extract" -xf -
           echo "CODON_PATH=$CODON_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
-
-      - name: Restore Codon LLVM cache
-        id: llvm-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ env.CODON_LLVM_DIR }}
-          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
-          restore-keys: |
-            codon-llvm-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Download Codon LLVM artifact (cached)
-        if: steps.resolve.outputs.llvm_needs_build != 'true'
-        run: |
-          mkdir -p "$CODON_LLVM_DIR"
-          if ! gh run download "${{ steps.resolve.outputs.llvm_run_id }}" -n "${{ steps.resolve.outputs.llvm_artifact }}" -D "$CODON_LLVM_DIR"; then
-            echo "LLVM artifact download failed; searching by name..." >&2
-            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
-              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.llvm_artifact }}") | .id' | head -n 1)"
-            if [ -z "$ART_ID" ]; then
-              echo "LLVM artifact not found; continuing with cache/build." >&2
-              exit 0
-            fi
-            ZIP_PATH="$CODON_LLVM_DIR/llvm.zip"
-            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
-            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
-              "$ZIP_PATH" "$CODON_LLVM_DIR"
-            rm -f "$ZIP_PATH"
-          fi
-
-      - name: Build Codon LLVM (cached)
-        run: |
-          set -euo pipefail
-          if [ -d "${CODON_LLVM_DIR}/install/lib/cmake/llvm" ]; then
-            if ls "${CODON_LLVM_DIR}/install/lib"/libLLVM*.so* >/dev/null 2>&1; then
-              echo "Using cached Codon LLVM at ${CODON_LLVM_DIR}"
-              exit 0
-            fi
-            echo "Cached LLVM missing libLLVM.so; rebuilding with LLVM_BUILD_LLVM_DYLIB=ON"
-          fi
-          rm -rf "${CODON_LLVM_DIR}"
-          git clone --depth 1 -b "${LLVM_BRANCH}" https://github.com/exaloop/llvm-project "${CODON_LLVM_DIR}"
-          cmake -S "${CODON_LLVM_DIR}/llvm" -B "${CODON_LLVM_DIR}/build" -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DLLVM_INCLUDE_TESTS=OFF \
-            -DLLVM_ENABLE_RTTI=ON \
-            -DLLVM_ENABLE_ZLIB=OFF \
-            -DLLVM_ENABLE_TERMINFO=OFF \
-            -DLLVM_BUILD_LLVM_DYLIB=ON \
-            -DLLVM_LINK_LLVM_DYLIB=ON \
-            -DLLVM_TARGETS_TO_BUILD=all \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++
-          cmake --build "${CODON_LLVM_DIR}/build"
-          cmake --install "${CODON_LLVM_DIR}/build" --prefix "${CODON_LLVM_DIR}/install"
-
-      - name: Save Codon LLVM cache
-        if: steps.llvm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ env.CODON_LLVM_DIR }}
-          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
-
-      - name: Upload Codon LLVM artifact
-        if: steps.resolve.outputs.llvm_needs_build == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: codon-llvm-${{ env.PLATFORM }}-${{ steps.resolve.outputs.llvm_sha }}
-          path: ${{ env.CODON_LLVM_DIR }}/install
-          retention-days: 30
       - name: Build Sequre (if needed)
         if: steps.resolve.outputs.sequre_needs_build == 'true'
         env:
@@ -519,7 +545,7 @@ jobs:
           retention-days: 30
 
       - name: Build and publish Docker image (if needed)
-        if: steps.resolve.outputs.docker_needs_build == 'true'
+        if: env.BUILD_DOCKER == 'true' && steps.resolve.outputs.docker_needs_build == 'true' && github.event_name != 'pull_request'
         env:
           IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/syqure-cli
         run: |
@@ -544,7 +570,7 @@ jobs:
             "$SYQURE_ARTIFACT_DIR/syqure-cli-${PLATFORM}-${{ steps.resolve.outputs.docker_sha }}.tar.zst"
 
       - name: Upload Docker artifact
-        if: steps.resolve.outputs.docker_needs_build == 'true'
+        if: env.BUILD_DOCKER == 'true' && steps.resolve.outputs.docker_needs_build == 'true' && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}
@@ -566,24 +592,48 @@ jobs:
           steps.resolve.outputs.syqure_needs_build == 'true' ||
           steps.resolve.outputs.python_needs_build == 'true' ||
           steps.resolve.outputs.docker_needs_build == 'true'
+          && github.event_name != 'pull_request'
         run: |
           set -euo pipefail
-          CODON_ARTIFACT="codon-${PLATFORM}-${{ steps.resolve.outputs.codon_sha }}"
-          LLVM_ARTIFACT="codon-llvm-${PLATFORM}-${{ steps.resolve.outputs.llvm_sha }}"
-          SEQURE_ARTIFACT="sequre-${PLATFORM}-${{ steps.resolve.outputs.sequre_sha }}"
-          SYQURE_ARTIFACT="syqure-${PLATFORM}-${{ steps.resolve.outputs.syqure_sha }}"
-          PYTHON_ARTIFACT="syqure-python-${PLATFORM}-${{ steps.resolve.outputs.python_sha }}"
-          DOCKER_ARTIFACT="syqure-cli-${PLATFORM}-${{ steps.resolve.outputs.docker_sha }}"
+          export CODON_SHA="${{ steps.resolve.outputs.codon_sha }}"
+          export LLVM_SHA="${{ steps.resolve.outputs.llvm_sha }}"
+          export SEQURE_SHA="${{ steps.resolve.outputs.sequre_sha }}"
+          export SYQURE_SHA="${{ steps.resolve.outputs.syqure_sha }}"
+          export PYTHON_SHA="${{ steps.resolve.outputs.python_sha }}"
+          export DOCKER_SHA="${{ steps.resolve.outputs.docker_sha }}"
+          export BUILD_DOCKER="${BUILD_DOCKER:-true}"
 
-          python3 -c 'import json; from pathlib import Path; path=Path("ci/artifacts.json"); data={"linux-x86_64": {"codon": None, "sequre": None, "syqure": None, "python": None, "llvm": None, "docker": None}}; \
-          data=json.loads(path.read_text()) if path.exists() else data; plat=data.setdefault("linux-x86_64", {}); \
-          plat["codon"]={"sha":"${{ steps.resolve.outputs.codon_sha }}","run_id":"${{ github.run_id }}","artifact":"codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}"}; \
-          plat["llvm"]={"sha":"${{ steps.resolve.outputs.llvm_sha }}","run_id":"${{ github.run_id }}","artifact":"codon-llvm-${{ env.PLATFORM }}-${{ steps.resolve.outputs.llvm_sha }}"}; \
-          plat["sequre"]={"sha":"${{ steps.resolve.outputs.sequre_sha }}","run_id":"${{ github.run_id }}","artifact":"sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}"}; \
-          plat["syqure"]={"sha":"${{ steps.resolve.outputs.syqure_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}"}; \
-          plat["python"]={"sha":"${{ steps.resolve.outputs.python_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-python-${{ env.PLATFORM }}-${{ steps.resolve.outputs.python_sha }}"}; \
-          plat["docker"]={"sha":"${{ steps.resolve.outputs.docker_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}"}; \
-          path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")'
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("ci/artifacts.json")
+          data = {}
+          if path.exists():
+              data = json.loads(path.read_text())
+
+          platform = os.environ["PLATFORM"]
+          run_id = os.environ["GITHUB_RUN_ID"]
+          plat = data.setdefault(platform, {})
+
+          def set_artifact(name, sha, artifact):
+              plat[name] = {"sha": sha, "run_id": run_id, "artifact": artifact}
+
+          set_artifact("codon", os.environ["CODON_SHA"], f"codon-{platform}-{os.environ['CODON_SHA']}")
+          set_artifact("llvm", os.environ["LLVM_SHA"], f"codon-llvm-{platform}-{os.environ['LLVM_SHA']}")
+          set_artifact("sequre", os.environ["SEQURE_SHA"], f"sequre-{platform}-{os.environ['SEQURE_SHA']}")
+          set_artifact("syqure", os.environ["SYQURE_SHA"], f"syqure-{platform}-{os.environ['SYQURE_SHA']}")
+          set_artifact("python", os.environ["PYTHON_SHA"], f"syqure-python-{platform}-{os.environ['PYTHON_SHA']}")
+
+          if os.environ.get("BUILD_DOCKER", "true") == "true":
+              set_artifact("docker", os.environ["DOCKER_SHA"], f"syqure-cli-{platform}-{os.environ['DOCKER_SHA']}")
+          else:
+              plat.setdefault("docker", None)
+
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+          PY
 
       - name: Commit provenance
         if: |
@@ -593,9 +643,479 @@ jobs:
           steps.resolve.outputs.syqure_needs_build == 'true' ||
           steps.resolve.outputs.python_needs_build == 'true' ||
           steps.resolve.outputs.docker_needs_build == 'true'
+          && github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
           git add ci/artifacts.json
-          git commit -m "ci: record linux-x86_64 artifacts [skip ci]" || exit 0
-          git push
+          git commit -m "ci: record ${PLATFORM} artifacts [skip ci]" || exit 0
+          git push origin "${GITHUB_REF_NAME}"
+
+  build-macos-arm64:
+    runs-on: macos-14
+    needs: configure-sequre
+    env:
+      PLATFORM: macos-arm64
+      BIN_DIR: bin/macos-arm64
+      BUILD_DOCKER: "false"
+      CODON_ARTIFACT_DIR: ci/_artifacts/codon
+      SEQURE_ARTIFACT_DIR: ci/_artifacts/sequre
+      SYQURE_ARTIFACT_DIR: ci/_artifacts/syqure
+      CODON_LLVM_DIR: ci/_artifacts/codon-llvm
+      LLVM_BRANCH: codon-17.0.6
+      LLVM_TARGETS: AArch64
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install build dependencies
+        run: |
+          brew update
+          brew install cmake ninja zstd jq fmt libxml2 libedit openssl@3 libsodium gmp pkg-config
+
+      - name: Resolve provenance and build plan
+        id: resolve
+        run: |
+          set -euo pipefail
+          CODON_SHA="$(git -C codon rev-parse HEAD)"
+          SEQURE_SHA="$(git -C sequre rev-parse HEAD)"
+          SYQURE_SHA="$(git rev-parse HEAD)"
+          LLVM_SHA="$(git ls-remote https://github.com/exaloop/llvm-project refs/heads/${LLVM_BRANCH} | awk '{print $1}')"
+          VERSION="$(cat VERSION)"
+          DOCKER_SHA="$SYQURE_SHA"
+          BUILD_DOCKER="${BUILD_DOCKER:-true}"
+          echo "codon_sha=$CODON_SHA" >> "$GITHUB_OUTPUT"
+          echo "sequre_sha=$SEQURE_SHA" >> "$GITHUB_OUTPUT"
+          echo "syqure_sha=$SYQURE_SHA" >> "$GITHUB_OUTPUT"
+          echo "llvm_sha=$LLVM_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "docker_sha=$DOCKER_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ -f ci/artifacts.json ]; then
+            CODON_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].codon.sha // empty' ci/artifacts.json)"
+            SEQURE_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].sequre.sha // empty' ci/artifacts.json)"
+            SYQURE_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].syqure.sha // empty' ci/artifacts.json)"
+            LLVM_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].llvm.sha // empty' ci/artifacts.json)"
+            DOCKER_PREV_SHA="$(jq -r --arg platform "$PLATFORM" '.[$platform].docker.sha // empty' ci/artifacts.json)"
+            CODON_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].codon.run_id // empty' ci/artifacts.json)"
+            SEQURE_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].sequre.run_id // empty' ci/artifacts.json)"
+            SYQURE_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].syqure.run_id // empty' ci/artifacts.json)"
+            LLVM_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].llvm.run_id // empty' ci/artifacts.json)"
+            DOCKER_RUN_ID="$(jq -r --arg platform "$PLATFORM" '.[$platform].docker.run_id // empty' ci/artifacts.json)"
+            CODON_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].codon.artifact // empty' ci/artifacts.json)"
+            SEQURE_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].sequre.artifact // empty' ci/artifacts.json)"
+            SYQURE_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].syqure.artifact // empty' ci/artifacts.json)"
+            LLVM_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].llvm.artifact // empty' ci/artifacts.json)"
+            DOCKER_ARTIFACT="$(jq -r --arg platform "$PLATFORM" '.[$platform].docker.artifact // empty' ci/artifacts.json)"
+          else
+            CODON_PREV_SHA=""
+            SEQURE_PREV_SHA=""
+            SYQURE_PREV_SHA=""
+            LLVM_PREV_SHA=""
+            DOCKER_PREV_SHA=""
+            CODON_RUN_ID=""
+            SEQURE_RUN_ID=""
+            SYQURE_RUN_ID=""
+            LLVM_RUN_ID=""
+            DOCKER_RUN_ID=""
+            CODON_ARTIFACT=""
+            SEQURE_ARTIFACT=""
+            SYQURE_ARTIFACT=""
+            LLVM_ARTIFACT=""
+            DOCKER_ARTIFACT=""
+          fi
+
+          lookup_run_id() {
+            local name="$1"
+            if [ -z "$name" ]; then
+              return 0
+            fi
+            local out
+            set +o pipefail
+            out="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq ".artifacts[] | select(.name==\"${name}\") | .workflow_run.id" | head -n 1)"
+            set -o pipefail
+            echo "$out"
+          }
+
+          if [ -z "$CODON_ARTIFACT" ]; then
+            CODON_ARTIFACT="codon-${PLATFORM}-${CODON_SHA}"
+          fi
+          CODON_RUN_ID="$(lookup_run_id "$CODON_ARTIFACT")"
+          if [ -z "$LLVM_ARTIFACT" ]; then
+            LLVM_ARTIFACT="codon-llvm-${PLATFORM}-${LLVM_SHA}"
+          fi
+          LLVM_RUN_ID="$(lookup_run_id "$LLVM_ARTIFACT")"
+          if [ -z "$SEQURE_ARTIFACT" ]; then
+            SEQURE_ARTIFACT="sequre-${PLATFORM}-${SEQURE_SHA}"
+          fi
+          SEQURE_RUN_ID="$(lookup_run_id "$SEQURE_ARTIFACT")"
+          if [ -z "$SYQURE_ARTIFACT" ]; then
+            SYQURE_ARTIFACT="syqure-${PLATFORM}-${SYQURE_SHA}"
+          fi
+          SYQURE_RUN_ID="$(lookup_run_id "$SYQURE_ARTIFACT")"
+          if [ -z "$DOCKER_ARTIFACT" ]; then
+            DOCKER_ARTIFACT="syqure-cli-${PLATFORM}-${DOCKER_SHA}"
+          fi
+          DOCKER_RUN_ID="$(lookup_run_id "$DOCKER_ARTIFACT")"
+
+          CODON_NEEDS_BUILD="false"
+          SEQURE_NEEDS_BUILD="false"
+          SYQURE_NEEDS_BUILD="false"
+          LLVM_NEEDS_BUILD="false"
+          DOCKER_NEEDS_BUILD="false"
+
+          if [ "$CODON_PREV_SHA" != "$CODON_SHA" ] || [ -z "$CODON_RUN_ID" ] || [ -z "$CODON_ARTIFACT" ]; then
+            CODON_NEEDS_BUILD="true"
+          fi
+          if [ "$LLVM_PREV_SHA" != "$LLVM_SHA" ] || [ -z "$LLVM_RUN_ID" ] || [ -z "$LLVM_ARTIFACT" ]; then
+            LLVM_NEEDS_BUILD="true"
+          fi
+          if [ "$SEQURE_PREV_SHA" != "$SEQURE_SHA" ] || [ -z "$SEQURE_RUN_ID" ] || [ -z "$SEQURE_ARTIFACT" ] || [ "$CODON_NEEDS_BUILD" = "true" ]; then
+            SEQURE_NEEDS_BUILD="true"
+          fi
+          if [ "$SYQURE_PREV_SHA" != "$SYQURE_SHA" ] || [ -z "$SYQURE_RUN_ID" ] || [ -z "$SYQURE_ARTIFACT" ] || [ "$SEQURE_NEEDS_BUILD" = "true" ]; then
+            SYQURE_NEEDS_BUILD="true"
+          fi
+          if [ "$BUILD_DOCKER" = "true" ]; then
+            if [ "$DOCKER_PREV_SHA" != "$DOCKER_SHA" ] || [ -z "$DOCKER_RUN_ID" ] || [ -z "$DOCKER_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
+              DOCKER_NEEDS_BUILD="true"
+            fi
+          else
+            DOCKER_NEEDS_BUILD="false"
+          fi
+
+          echo "codon_needs_build=$CODON_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "sequre_needs_build=$SEQURE_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "syqure_needs_build=$SYQURE_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "llvm_needs_build=$LLVM_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "docker_needs_build=$DOCKER_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "codon_run_id=$CODON_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "sequre_run_id=$SEQURE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "syqure_run_id=$SYQURE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "llvm_run_id=$LLVM_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "docker_run_id=$DOCKER_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "codon_artifact=$CODON_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "sequre_artifact=$SEQURE_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "syqure_artifact=$SYQURE_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "llvm_artifact=$LLVM_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "docker_artifact=$DOCKER_ARTIFACT" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Codon LLVM cache
+        id: llvm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CODON_LLVM_DIR }}
+          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
+          restore-keys: |
+            codon-llvm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Download Codon LLVM artifact (cached)
+        if: steps.resolve.outputs.llvm_needs_build != 'true'
+        run: |
+          mkdir -p "$CODON_LLVM_DIR"
+          if ! gh run download "${{ steps.resolve.outputs.llvm_run_id }}" -n "${{ steps.resolve.outputs.llvm_artifact }}" -D "$CODON_LLVM_DIR"; then
+            echo "LLVM artifact download failed; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.llvm_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "LLVM artifact not found; continuing with cache/build." >&2
+              exit 0
+            fi
+            ZIP_PATH="$CODON_LLVM_DIR/llvm.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$CODON_LLVM_DIR"
+            rm -f "$ZIP_PATH"
+          fi
+
+      - name: Build Codon LLVM (cached)
+        run: |
+          set -euo pipefail
+          OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          LLVM_SHARED_GLOB="libLLVM*.so*"
+          CMAKE_OSX_ARGS=()
+          if [ "$OS_NAME" = "darwin" ]; then
+            LLVM_SHARED_GLOB="libLLVM*.dylib"
+            CMAKE_OSX_ARGS=(-DCMAKE_OSX_ARCHITECTURES=arm64)
+            if [ -n "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
+              CMAKE_OSX_ARGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET")
+            fi
+          fi
+          LLVM_TARGETS="${LLVM_TARGETS:-all}"
+          if [ -d "${CODON_LLVM_DIR}/install/lib/cmake/llvm" ]; then
+            if ls "${CODON_LLVM_DIR}/install/lib"/$LLVM_SHARED_GLOB >/dev/null 2>&1; then
+              echo "Using cached Codon LLVM at ${CODON_LLVM_DIR}"
+              exit 0
+            fi
+            echo "Cached LLVM missing shared libLLVM; rebuilding with LLVM_BUILD_LLVM_DYLIB=ON"
+          fi
+          rm -rf "${CODON_LLVM_DIR}"
+          git clone --depth 1 -b "${LLVM_BRANCH}" https://github.com/exaloop/llvm-project "${CODON_LLVM_DIR}"
+          cmake -S "${CODON_LLVM_DIR}/llvm" -B "${CODON_LLVM_DIR}/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_ENABLE_RTTI=ON \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_BUILD_LLVM_DYLIB=ON \
+            -DLLVM_LINK_LLVM_DYLIB=ON \
+            -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGETS" \
+            "${CMAKE_OSX_ARGS[@]}" \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build "${CODON_LLVM_DIR}/build"
+          cmake --install "${CODON_LLVM_DIR}/build" --prefix "${CODON_LLVM_DIR}/install"
+
+      - name: Save Codon LLVM cache
+        if: steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CODON_LLVM_DIR }}
+          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
+
+      - name: Upload Codon LLVM artifact
+        if: steps.resolve.outputs.llvm_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codon-llvm-${{ env.PLATFORM }}-${{ steps.resolve.outputs.llvm_sha }}
+          path: ${{ env.CODON_LLVM_DIR }}/install
+          retention-days: 30
+
+      - name: Build Codon (if needed)
+        if: steps.resolve.outputs.codon_needs_build == 'true'
+        run: |
+          export LLVM_OVERRIDE="$CODON_LLVM_DIR/install/lib/cmake/llvm"
+          export CODON_ENABLE_OPENMP=OFF
+          ./compile_codon_macos.sh
+          mkdir -p "$CODON_ARTIFACT_DIR"
+          tar -C "$BIN_DIR" -c codon | zstd -19 -o "$CODON_ARTIFACT_DIR/codon-${PLATFORM}-${{ steps.resolve.outputs.codon_sha }}.tar.zst"
+
+      - name: Upload Codon artifact
+        if: steps.resolve.outputs.codon_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}
+          path: ${{ env.CODON_ARTIFACT_DIR }}/codon-${{ env.PLATFORM }}-${{ steps.resolve.outputs.codon_sha }}.tar.zst
+          retention-days: 30
+
+      - name: Download Codon artifact (cached)
+        if: steps.resolve.outputs.codon_needs_build != 'true'
+        run: |
+          mkdir -p "$CODON_ARTIFACT_DIR"
+          if ! gh run download "${{ steps.resolve.outputs.codon_run_id }}" -n "${{ steps.resolve.outputs.codon_artifact }}" -D "$CODON_ARTIFACT_DIR"; then
+            echo "Cached Codon artifact missing; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.codon_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "Codon artifact not found." >&2
+              exit 1
+            fi
+            ZIP_PATH="$CODON_ARTIFACT_DIR/codon.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$CODON_ARTIFACT_DIR"
+            rm -f "$ZIP_PATH"
+          fi
+
+      - name: Extract Codon artifact
+        run: |
+          CODON_TAR="$(ls "$CODON_ARTIFACT_DIR"/codon-${PLATFORM}-*.tar.zst | head -n 1)"
+          mkdir -p "$CODON_ARTIFACT_DIR/extract"
+          zstd -dc "$CODON_TAR" | tar -C "$CODON_ARTIFACT_DIR/extract" -xf -
+          echo "CODON_PATH=$CODON_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
+
+      - name: Build Sequre (if needed)
+        if: steps.resolve.outputs.sequre_needs_build == 'true'
+        env:
+          LLVM_PATH: ${{ env.CODON_LLVM_DIR }}
+        run: |
+          CODON_PATH="$CODON_PATH" ./compile_sequre.sh
+          mkdir -p "$SEQURE_ARTIFACT_DIR"
+          tar -C "$(dirname "$CODON_PATH")" -c "$(basename "$CODON_PATH")" | zstd -19 -o "$SEQURE_ARTIFACT_DIR/sequre-${PLATFORM}-${{ steps.resolve.outputs.sequre_sha }}.tar.zst"
+
+      - name: Upload Sequre artifact
+        if: steps.resolve.outputs.sequre_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}
+          path: ${{ env.SEQURE_ARTIFACT_DIR }}/sequre-${{ env.PLATFORM }}-${{ steps.resolve.outputs.sequre_sha }}.tar.zst
+          retention-days: 30
+
+      - name: Download Sequre artifact (cached)
+        if: steps.resolve.outputs.sequre_needs_build != 'true'
+        run: |
+          mkdir -p "$SEQURE_ARTIFACT_DIR"
+          if ! gh run download "${{ steps.resolve.outputs.sequre_run_id }}" -n "${{ steps.resolve.outputs.sequre_artifact }}" -D "$SEQURE_ARTIFACT_DIR"; then
+            echo "Cached Sequre artifact missing; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.sequre_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "Sequre artifact not found." >&2
+              exit 1
+            fi
+            ZIP_PATH="$SEQURE_ARTIFACT_DIR/sequre.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$SEQURE_ARTIFACT_DIR"
+            rm -f "$ZIP_PATH"
+          fi
+
+      - name: Extract Sequre artifact
+        run: |
+          SEQURE_TAR="$(ls "$SEQURE_ARTIFACT_DIR"/sequre-${PLATFORM}-*.tar.zst | head -n 1)"
+          mkdir -p "$SEQURE_ARTIFACT_DIR/extract"
+          zstd -dc "$SEQURE_TAR" | tar -C "$SEQURE_ARTIFACT_DIR/extract" -xf -
+          echo "CODON_PATH=$SEQURE_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
+
+      - name: Build Syqure (if needed)
+        if: steps.resolve.outputs.syqure_needs_build == 'true'
+        run: |
+          CODON_PATH="$CODON_PATH" ./bin_libs.sh
+          export SYQURE_BUNDLE_FILE="$(pwd)/syqure/bundles/$(rustc -vV | awk '/host:/{print $2}').tar.zst"
+          cargo build -p syqure
+          mkdir -p "$SYQURE_ARTIFACT_DIR"
+          tar -C . -c \
+            target/debug/syqure \
+            syqure/bundles/*.tar.zst | zstd -19 -o "$SYQURE_ARTIFACT_DIR/syqure-${PLATFORM}-${{ steps.resolve.outputs.syqure_sha }}.tar.zst"
+
+      - name: Upload Syqure artifact
+        if: steps.resolve.outputs.syqure_needs_build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}
+          path: ${{ env.SYQURE_ARTIFACT_DIR }}/syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}.tar.zst
+          retention-days: 30
+
+      - name: Download Syqure artifact (cached)
+        if: steps.resolve.outputs.syqure_needs_build != 'true'
+        run: |
+          mkdir -p "$SYQURE_ARTIFACT_DIR"
+          if ! gh run download "${{ steps.resolve.outputs.syqure_run_id }}" -n "${{ steps.resolve.outputs.syqure_artifact }}" -D "$SYQURE_ARTIFACT_DIR"; then
+            echo "Cached Syqure artifact missing; searching by name..." >&2
+            ART_ID="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq '.artifacts[] | select(.name=="${{ steps.resolve.outputs.syqure_artifact }}") | .id' | head -n 1)"
+            if [ -z "$ART_ID" ]; then
+              echo "Syqure artifact not found." >&2
+              exit 1
+            fi
+            ZIP_PATH="$SYQURE_ARTIFACT_DIR/syqure.zip"
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ART_ID}/zip" > "$ZIP_PATH"
+            python3 -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' \
+              "$ZIP_PATH" "$SYQURE_ARTIFACT_DIR"
+            rm -f "$ZIP_PATH"
+          fi
+
+      - name: Extract Syqure artifact
+        run: |
+          SYQURE_TAR="$(ls "$SYQURE_ARTIFACT_DIR"/syqure-${PLATFORM}-*.tar.zst | head -n 1)"
+          mkdir -p "$SYQURE_ARTIFACT_DIR/extract"
+          zstd -dc "$SYQURE_TAR" | tar -C "$SYQURE_ARTIFACT_DIR/extract" -xf -
+
+      - name: Build and publish Docker image (if needed)
+        if: env.BUILD_DOCKER == 'true' && steps.resolve.outputs.docker_needs_build == 'true' && github.event_name != 'pull_request'
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/syqure-cli
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          DOCKER_CTX="ci/_docker"
+          rm -rf "$DOCKER_CTX"
+          mkdir -p "$DOCKER_CTX/target/debug" "$DOCKER_CTX/bin/codon/lib"
+          cp "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" "$DOCKER_CTX/target/debug/"
+          cp -R "$SEQURE_ARTIFACT_DIR/extract/codon/lib/codon" "$DOCKER_CTX/bin/codon/lib/"
+          cp -R example "$DOCKER_CTX/example"
+          cp docker/Dockerfile.syqure "$DOCKER_CTX/Dockerfile.syqure"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build -f "$DOCKER_CTX/Dockerfile.syqure" \
+            -t "$IMAGE_NAME:$VERSION" \
+            -t "$IMAGE_NAME:latest" \
+            "$DOCKER_CTX"
+          docker push "$IMAGE_NAME:$VERSION"
+          docker push "$IMAGE_NAME:latest"
+          mkdir -p "$SYQURE_ARTIFACT_DIR"
+          docker save "$IMAGE_NAME:$VERSION" | zstd -19 -o \
+            "$SYQURE_ARTIFACT_DIR/syqure-cli-${PLATFORM}-${{ steps.resolve.outputs.docker_sha }}.tar.zst"
+
+      - name: Upload Docker artifact
+        if: env.BUILD_DOCKER == 'true' && steps.resolve.outputs.docker_needs_build == 'true' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}
+          path: ${{ env.SYQURE_ARTIFACT_DIR }}/syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}.tar.zst
+          retention-days: 30
+
+      - name: Smoke test
+        run: |
+          export SYQURE_BUNDLE_FILE="$SYQURE_ARTIFACT_DIR/extract/syqure/bundles/$(rustc -vV | awk '/host:/{print $2}').tar.zst"
+          export SYQURE_BUNDLE_CACHE="$SYQURE_ARTIFACT_DIR/extract/target/syqure-cache"
+          rm -rf "$SYQURE_BUNDLE_CACHE"
+          "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" example/two_party_sum_simple.codon
+
+      - name: Update provenance file
+        if: |
+          steps.resolve.outputs.codon_needs_build == 'true' ||
+          steps.resolve.outputs.llvm_needs_build == 'true' ||
+          steps.resolve.outputs.sequre_needs_build == 'true' ||
+          steps.resolve.outputs.syqure_needs_build == 'true' ||
+          steps.resolve.outputs.docker_needs_build == 'true'
+          && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          export CODON_SHA="${{ steps.resolve.outputs.codon_sha }}"
+          export LLVM_SHA="${{ steps.resolve.outputs.llvm_sha }}"
+          export SEQURE_SHA="${{ steps.resolve.outputs.sequre_sha }}"
+          export SYQURE_SHA="${{ steps.resolve.outputs.syqure_sha }}"
+          export DOCKER_SHA="${{ steps.resolve.outputs.docker_sha }}"
+          export BUILD_DOCKER="${BUILD_DOCKER:-true}"
+
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("ci/artifacts.json")
+          data = {}
+          if path.exists():
+              data = json.loads(path.read_text())
+
+          platform = os.environ["PLATFORM"]
+          run_id = os.environ["GITHUB_RUN_ID"]
+          plat = data.setdefault(platform, {})
+
+          def set_artifact(name, sha, artifact):
+              plat[name] = {"sha": sha, "run_id": run_id, "artifact": artifact}
+
+          set_artifact("codon", os.environ["CODON_SHA"], f"codon-{platform}-{os.environ['CODON_SHA']}")
+          set_artifact("llvm", os.environ["LLVM_SHA"], f"codon-llvm-{platform}-{os.environ['LLVM_SHA']}")
+          set_artifact("sequre", os.environ["SEQURE_SHA"], f"sequre-{platform}-{os.environ['SEQURE_SHA']}")
+          set_artifact("syqure", os.environ["SYQURE_SHA"], f"syqure-{platform}-{os.environ['SYQURE_SHA']}")
+
+          if os.environ.get("BUILD_DOCKER", "true") == "true":
+              set_artifact("docker", os.environ["DOCKER_SHA"], f"syqure-cli-{platform}-{os.environ['DOCKER_SHA']}")
+          else:
+              plat.setdefault("docker", None)
+
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+          PY
+
+      - name: Commit provenance
+        if: |
+          steps.resolve.outputs.codon_needs_build == 'true' ||
+          steps.resolve.outputs.llvm_needs_build == 'true' ||
+          steps.resolve.outputs.sequre_needs_build == 'true' ||
+          steps.resolve.outputs.syqure_needs_build == 'true' ||
+          steps.resolve.outputs.docker_needs_build == 'true'
+          && github.event_name != 'pull_request'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git add ci/artifacts.json
+          git commit -m "ci: record ${PLATFORM} artifacts [skip ci]" || exit 0
+          git push origin "${GITHUB_REF_NAME}"
