@@ -476,22 +476,39 @@ jobs:
           SYQURE_BUNDLE_FILE: ${{ env.SYQURE_BUNDLE_FILE }}
           SYQURE_CPP_INCLUDE: ${{ env.SYQURE_CPP_INCLUDE }}
           SYQURE_CPP_LIB_DIRS: ${{ env.SYQURE_CPP_LIB_DIRS }}
+          SYQURE_SKIP_BUNDLE_UNPACK: "1"
         with:
           manylinux: "2_28"
           args: --release --manifest-path python/Cargo.toml --out ${{ env.PYTHON_ARTIFACT_DIR }}/dist
           before-script-linux: |
             set -euo pipefail
-            yum install -y zstd cmake gcc-c++
+            yum install -y zstd cmake gcc-c++ patchelf
             curl -L https://github.com/fmtlib/fmt/archive/refs/tags/10.2.1.tar.gz | tar xz
             cmake -S fmt-10.2.1 -B fmt-10.2.1/build -DFMT_TEST=OFF -DFMT_DOC=OFF
             cmake --build fmt-10.2.1/build --target install
+
+      - name: Inject bundle into wheel (if needed)
+        if: steps.resolve.outputs.python_needs_build == 'true'
+        env:
+          SYQURE_BUNDLE_FILE: ${{ env.SYQURE_BUNDLE_FILE }}
+          WHEEL_OUT: ${{ env.PYTHON_ARTIFACT_DIR }}/dist
+          BUNDLED_OUT: ${{ env.PYTHON_ARTIFACT_DIR }}/dist-bundled
+          SKIP_BUILD: "1"
+          SKIP_LIBS: "1"
+        run: |
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install wheel
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          ./scripts/build_python_postbundle.sh
 
       - name: Upload Python wheel artifact
         if: steps.resolve.outputs.python_needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: syqure-python-${{ env.PLATFORM }}-${{ steps.resolve.outputs.python_sha }}
-          path: ${{ env.PYTHON_ARTIFACT_DIR }}/dist/*.whl
+          path: ${{ env.PYTHON_ARTIFACT_DIR }}/dist-bundled/*.whl
           retention-days: 30
 
       - name: Build and publish Docker image (if needed)
