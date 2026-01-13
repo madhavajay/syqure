@@ -157,6 +157,10 @@ fn set_bundle_env() {
             "cargo:rustc-env=SYQURE_BUNDLE_FILE={}",
             val.to_string_lossy()
         );
+        println!(
+            "cargo:rerun-if-changed={}",
+            val.to_string_lossy()
+        );
         return;
     }
     if let Some(root) = repo_root() {
@@ -166,6 +170,7 @@ fn set_bundle_env() {
                 .join(format!("{}.tar.zst", triple));
             if candidate.exists() {
                 println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", candidate.display());
+                println!("cargo:rerun-if-changed={}", candidate.display());
                 return;
             }
             // Fallback: if we have a local codon install, package it into OUT_DIR.

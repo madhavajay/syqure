@@ -5,7 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Configuration (override by exporting CODON_DIR/LLVM_OVERRIDE/BUILD_TYPE)
 CODON_DIR="${CODON_DIR:-$SCRIPT_DIR/codon}"
 INSTALL_DIR="$CODON_DIR/install"
-BIN_DIR="${BIN_DIR:-$SCRIPT_DIR/bin}"
+ARCH_NAME="$(uname -m | tr '[:upper:]' '[:lower:]')"
+ARCH_LABEL="$ARCH_NAME"
+case "$ARCH_NAME" in
+  arm64|aarch64) ARCH_LABEL="arm64" ;;
+  x86_64|amd64|i386|i686) ARCH_LABEL="x86" ;;
+esac
+BIN_DIR_DEFAULT="$SCRIPT_DIR/bin/linux-$ARCH_LABEL"
+BIN_DIR="${BIN_DIR:-$BIN_DIR_DEFAULT}"
 LLVM_OVERRIDE="${LLVM_OVERRIDE:-}"
 LLVM_BRANCH="${LLVM_BRANCH:-codon-17.0.6}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
@@ -15,6 +22,8 @@ CLEAN=0
 CLEAN_ALL=0
 OPENMP_FLAG="${CODON_ENABLE_OPENMP:-ON}"
 SKIP_JUPYTER_KERNEL="${SKIP_JUPYTER_KERNEL:-0}"
+SKIP_JUPYTER_BUILD="${SKIP_JUPYTER_BUILD:-0}"
+FORCE_JUPYTER_BUILD="${FORCE_JUPYTER_BUILD:-0}"
 
 for arg in "$@"; do
     case "$arg" in
@@ -74,6 +83,10 @@ fi
 
 if [ "$REBUILD_LLVM" -eq 1 ]; then
     echo "=== Building LLVM from source (this takes 30-60 min) ==="
+    if [ -d "llvm-project/.git" ] && [ ! -d "llvm-project/llvm" ]; then
+        echo "=== llvm-project checkout missing llvm/; re-cloning ===" >&2
+        rm -rf llvm-project
+    fi
     if [ ! -d "llvm-project/.git" ]; then
         rm -rf llvm-project
         echo "Cloning llvm-project (${LLVM_BRANCH}) with retries..."
@@ -122,6 +135,50 @@ if [ ! -d "$LLVM_DIR" ]; then
 fi
 
 # Step 2: Build Codon
+CPM_VERSION="0.32.3"
+CPM_PATH="$CODON_DIR/build/cmake/CPM_${CPM_VERSION}.cmake"
+if [ ! -s "$CPM_PATH" ]; then
+    mkdir -p "$(dirname "$CPM_PATH")"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "https://github.com/TheLartians/CPM.cmake/releases/download/v${CPM_VERSION}/CPM.cmake" -o "$CPM_PATH" || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$CPM_PATH" "https://github.com/TheLartians/CPM.cmake/releases/download/v${CPM_VERSION}/CPM.cmake" || true
+    fi
+    if [ ! -s "$CPM_PATH" ]; then
+        echo "Error: failed to download CPM.cmake to $CPM_PATH" >&2
+        echo "Check network access or download it manually before rerunning." >&2
+        exit 1
+    fi
+fi
+patch_bdwgc_minimum() {
+    local bdwgc_cmake="$CODON_DIR/build/_deps/bdwgc-src/CMakeLists.txt"
+    if [ ! -f "$bdwgc_cmake" ]; then
+        return 0
+    fi
+    python3 - <<'PY' "$bdwgc_cmake"
+import re
+import sys
+
+path = sys.argv[1]
+text = open(path, "r", encoding="utf-8").read()
+m = re.search(r"cmake_minimum_required\(VERSION\s+([0-9]+)\.([0-9]+)", text)
+if not m:
+    sys.exit(0)
+major, minor = int(m.group(1)), int(m.group(2))
+if (major, minor) >= (3, 5):
+    sys.exit(0)
+new_text = re.sub(
+    r"cmake_minimum_required\(VERSION\s+([0-9]+)\.([0-9]+)([^)]*)\)",
+    "cmake_minimum_required(VERSION 3.5)",
+    text,
+    count=1,
+)
+if new_text != text:
+    open(path, "w", encoding="utf-8").write(new_text)
+    print("Patched bdwgc CMakeLists.txt to require CMake 3.5+ for CMake >=4.")
+PY
+}
+patch_bdwgc_minimum
 echo "=== Building Codon (${BUILD_TYPE}) ==="
 mkdir -p build
 cmake -S . -B build -G "$GENERATOR" \
@@ -142,6 +199,12 @@ mkdir -p "$BIN_DIR"
 cp -a "$INSTALL_DIR" "${BIN_DIR}/codon"
 
 # Step 3: Build Jupyter plugin
+JUPYTER_LIB_PATH="$INSTALL_DIR/libcodon_jupyter.so"
+if [ "$SKIP_JUPYTER_BUILD" = "1" ]; then
+    echo "=== Skipping Jupyter Plugin build (SKIP_JUPYTER_BUILD=1) ==="
+elif [ "$FORCE_JUPYTER_BUILD" != "1" ] && [ -f "$JUPYTER_LIB_PATH" ] && [ -f "$CODON_DIR/jupyter/build/libcodon_jupyter.so" ]; then
+    echo "=== Jupyter Plugin already built; skipping (set FORCE_JUPYTER_BUILD=1 to rebuild) ==="
+else
 echo "=== Building Jupyter Plugin (${BUILD_TYPE}) ==="
 OPENSSL_ROOT_DIR="${OPENSSL_ROOT_DIR:-$(openssl version -d 2>/dev/null | awk -F'\"' '{print $2}')}"
 OPENSSL_CRYPTO_LIBRARY="${OPENSSL_CRYPTO_LIBRARY:-}"
@@ -214,6 +277,7 @@ cmake -S jupyter -B jupyter/build -G "$GENERATOR" \
     ${LIBUUID_INCLUDE_DIR:+-DLIBUUID_INCLUDE_DIR="$LIBUUID_INCLUDE_DIR"}
 cmake --build jupyter/build --config "${BUILD_TYPE}" -j"$CORES"
 cmake --install jupyter/build --prefix="$INSTALL_DIR"
+fi
 
 # Step 4: Install Jupyter kernel (optional)
 if [ "$SKIP_JUPYTER_KERNEL" = "1" ]; then

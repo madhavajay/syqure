@@ -1,0 +1,2429 @@
+import math
+
+import prg
+
+from functools import partial
+from internal.gc import sizeof, atomic, alloc
+from experimental.simd import Vec, bitcast_scatter, bitcast_vectorize
+from numpy.ndarray import ndarray
+from numpy.create import zeros, ones, zeros_like, array, identity
+
+from pickler import pickle, unpickle, _write_raw, _read_raw
+from patch import pickle_tuple_unpasteurized, unpickle_tuple_unpasteurized, tuple_pickle_size
+from pickle import pickle as native_pickle, unpickle as native_unpickle
+
+from sequre.constants import *
+from sequre.utils.utils import __rand_int, __rand_vec, __rand_mat, \
+    __rand_bits, __rand_vec_bits, __rand_mat_bits, zeros_vec, zeros_mat
+from sequre.utils.primitives import mod_pow
+
+from gmp import *
+from llvm import *
+from utils import double_to_fp
+
+from sequre.experimental.fast_modular_multiplication.u128_w_llvm_overflow_intrinsic import modular_mul_u128u128_v1, modular_mul_u128u64_v1
+from sequre.experimental.fast_modular_multiplication.u192_w_llvm_overflow_intrinsic import modular_mul_u192u192, modular_mul_u192u64
+
+
+# Frequently used vectors
+u64xN = Vec[u64, SIMD_LANE_SIZE]
+f64xN = Vec[float, SIMD_LANE_SIZE]
+
+
+# Socket instrinsics
+@tuple
+class in_addr:
+    s_addr: u32
+@tuple
+class sockaddr_in:
+    sin_family: u16
+    sin_port: u16
+    sin_addr: in_addr
+    sin_zero: u64
+@tuple
+class sockaddr_un:
+    sun_family: int
+    sun_path: ptr[byte]
+
+
+@extend
+class bool:
+    def all(self) -> bool:
+        return self
+    
+    def to_int_t(self, modulus: mpc_uint) -> mpc_uint:
+        return mpc_uint(self)
+    
+    def copy(self) -> bool:
+        return bool(self)
+    
+    def to_int(self) -> int:
+        return int(self)
+    
+    def reveal(self, *args) -> bool:
+        return self
+    
+    @staticmethod
+    def zeros() -> bool:
+        return False
+    
+    @staticmethod
+    def ones() -> bool:
+        return True
+    
+    @staticmethod
+    def nbytes() -> int:
+        return sizeof(bool)
+    
+    @staticmethod
+    def _pickle_size() -> int:
+        return bool.nbytes()
+    
+    def astype[t](self) -> t:
+        return t(self)
+    
+    def flatten(self) -> bool:
+        return self
+
+
+@extend
+class str:
+    def __getitem__(self, indices: list[int]):
+        substr_ptr = Ptr[byte](len(indices))
+        for i, ind in enumerate(indices):
+            str.memcpy(substr_ptr + i, self.ptr + ind, 1)
+        return str(substr_ptr, len(indices))
+    
+    def to_int(self) -> int:
+        return int(self)
+    
+    def to_int_t(self, modulus: mpc_uint) -> mpc_uint:
+        if self.startswith("-"):
+            return mpc_uint(self[1:]).neg_mod(modulus)
+        return mpc_uint(self) % modulus
+    
+    def nbytes(self) -> int:
+        return len(self)
+    
+    def _pickle_size(self) -> int:
+        return self.nbytes() + sizeof(int)
+
+
+@extend
+class complex:
+    def __int__(self) -> int:
+        return int(self.real)
+    
+    def __float__(self) -> float:
+        return float(self.real)
+
+    def copy(self):
+        return complex(self.real, self.imag)
+    
+    def reveal(self, *args) -> complex:
+        return self
+    
+    def zeros(self) -> complex:
+        return complex(0)
+    
+    @staticmethod
+    def nbytes() -> int:
+        return sizeof(float) * 2
+    
+    @staticmethod
+    def _pickle_size() -> int:
+        return complex.nbytes()
+    
+    def flatten(self) -> complex:
+        return self
+
+
+@extend
+class float:
+    def __init__(self, other: mpc_uint):
+        self = other.to_float()
+    
+    def astype[t](self) -> t:
+        return t(self)
+
+    def to_fp(self, modulus) -> mpc_uint:
+        return double_to_fp(self, modulus)
+    
+    def to_int(self) -> int:
+        return int(self)
+
+    def to_int_t(self, modulus: mpc_uint) -> mpc_uint:
+        return double_to_fp(self, modulus)
+    
+    def to_complex(self) -> complex:
+        return complex(self)
+    
+    def reveal(self, *args) -> float:
+        return self
+    
+    @staticmethod
+    def zeros() -> float:
+        return 0.0
+    
+    @staticmethod
+    def nbytes() -> int:
+        return sizeof(float)
+    
+    @staticmethod
+    def _pickle_size() -> int:
+        return float.nbytes()
+    
+    def flatten(self) -> float:
+        return self
+    
+    def sqrt(self) -> float:
+        return math.sqrt(self)
+    
+
+@extend
+class int:
+    def __truediv__[T](self, other: List[T]) -> List[float]:
+        return [self / other[i] for i in range(len(other))]
+
+    def __mod__(self: int, other: int) -> int:
+        # TODO: #138 Check why performance gets worsened with the fast modulus enabled (Note: naive_mod includes ring check)OND_FIELD_SIZE, SECOND_MOD_CONST)
+        return self.__naive_mod(other)
+    
+    def astype[t](self) -> t:
+        return t(self)
+    
+    def bitlen(self: int) -> int:
+        if self >> 63: self = -self
+        return int(u64(self).bitlen())
+    
+    def bit_reverse_subset(self: int, bitlen: int) -> int:
+        return self.bit_reverse() >> (64 - bitlen)
+    
+    def reveal(self, *args) -> int:
+        return self
+    
+    def neg_mod(self: int, modulus: int) -> int:
+        return modulus - self
+    
+    def add_mod(self: int, other: int, modulus: int) -> int:
+        return (self + other) % modulus
+    
+    def sub_mod(self: int, other: int, modulus: int) -> int:
+        return (self - other) % modulus
+    
+    def mul_mod(self: int, other: int, modulus: int) -> int:
+        return (self * other) % modulus
+    
+    def pow_mod(self: int, other: int, modulus: int) -> int:
+        return (self ** other) % modulus
+    
+    def lsh_mod(self: int, other: int, modulus: int) -> int:
+        return (self << other) % modulus
+    
+    def to_fp(self, modulus) -> mpc_uint:
+        return double_to_fp(float(self), modulus)
+    
+    def iter(self):
+        for _ in staticrange(1): yield self
+    
+    def to_int_t(self, modulus: mpc_uint) -> mpc_uint:
+        return (modulus + self) % modulus
+    
+    @staticmethod
+    def size() -> int:
+        return 1
+    
+    @staticmethod
+    def rand(base: int, distribution: str) -> int:
+        assert distribution == UNIFORM_DISTRIBUTION, "Not implemented yet: random distributions other than uniform"
+        return __rand_int(base)
+    
+    @staticmethod
+    def zeros() -> int:
+        return 0
+    
+    def to_float(self) -> float:
+        return float(self)
+    
+    def to_complex(self) -> complex:
+        return complex(self)
+    
+    def copy(self: int) -> int:
+        return int(self)
+    
+    @staticmethod
+    def zeros_float() -> float:
+        return 0.0
+    
+    @staticmethod
+    def ones() -> int:
+        return 1
+    
+    def has_zero(self: int) -> bool:
+        return self == 0
+    
+    @staticmethod
+    def nbytes() -> int:
+        return sizeof(int)
+    
+    @staticmethod
+    def _pickle_size() -> int:
+        return int.nbytes()
+    
+    def flatten(self) -> int:
+        return self
+    
+    def sqrt(self) -> float:
+        return math.sqrt(self)
+
+
+@extend
+class UInt:
+    def __new__(other) -> UInt[N]:
+        if isinstance(other, int): return superf(other)
+        elif isinstance(other, UInt[1]): return UInt[N]._new_from_bit(other)
+        elif isinstance(other, bool): return UInt[N]._new_from_bool(other)
+        elif isinstance(other, float):
+            # TODO: Implement faster solution
+            assert other >= 0, f"Casting float to UInt requires it to be non-negative for safety reasons. Float value received: {other}"
+
+            other_raw_int = other.bitcast_to_int()
+            exponent = (other_raw_int >> IEEE_754_MANTISSA_SIZE) - IEEE_754_EXPONENT_HALF_RANGE
+            assert exponent < N, f"Float too large. Requires at least {exponent} bits. UInt[N] size: {N}"
+
+            if exponent < 64:
+                if N <= 64: return UInt[N].from_float_to_intn(other)
+                else: return UInt[N].upcast(UInt[64].from_float_to_intn(other))
+
+            if N > 64:
+                mantissa = (u64(other_raw_int) << u64(IEEE_754_EXPONENT_SIZE + 1)) >> u64(IEEE_754_EXPONENT_SIZE + 1)
+                int_value = (u64(1) << u64(IEEE_754_MANTISSA_SIZE)) | mantissa
+                return UInt[N].upcast(int_value) << UInt[N](exponent - IEEE_754_MANTISSA_SIZE)
+                
+            raise ValueError(f"Float too large for u64. Requires at least {exponent} bits.")
+        else: return superf(other)
+    
+    def __add__(self: UInt[N], other: int) -> UInt[N]:
+        return self + UInt[N](other)
+    
+    def __mul__(self: UInt[N], other: int) -> UInt[N]:
+        return self * UInt[N](other)
+    
+    def __sub__(self: UInt[N], other: int) -> UInt[N]:
+        return self - UInt[N](other)
+    
+    def __truediv__(self: UInt[N], other: int) -> float:
+        return self / UInt[N](other)
+    
+    def __floordiv__(self: UInt[N], other: int) -> UInt[N]:
+        return self // UInt[N](other)
+    
+    def __pow__(self: UInt[N], other: UInt[N]) -> UInt[N]:
+        number = UInt[N](1)
+        value = self
+        while other:
+            if other & 1:
+                number = number * value
+            other >>= 1
+            value = value * value
+        return number
+    
+    def __pow__(self: UInt[N], other: int) -> UInt[N]:
+        return self ** UInt[N](other)
+    
+    def __eq__(self: UInt[N], other: int) -> bool:
+        return self == UInt[N](other)
+    
+    def __ne__(self: UInt[N], other: int) -> bool:
+        return self != UInt[N](other)
+    
+    def __gt__(self: UInt[N], other: int) -> bool:
+        return self > UInt[N](other)
+    
+    def __ge__(self: UInt[N], other: int) -> bool:
+        return self >= UInt[N](other)
+    
+    def __lt__(self: UInt[N], other: int) -> bool:
+        return self < UInt[N](other)
+    
+    def __le__(self: UInt[N], other: int) -> bool:
+        return self <= UInt[N](other)
+    
+    def __or__(self: UInt[N], other: int) -> UInt[N]:
+        return self | UInt[N](other)
+    
+    def __and__(self: UInt[N], other: int) -> UInt[N]:
+        return self & UInt[N](other)
+    
+    def __lshift__(self: UInt[N], other: int) -> UInt[N]:
+        return self << UInt[N](other)
+    
+    def __rshift__(self: UInt[N], other: int) -> UInt[N]:
+        return self >> UInt[N](other)
+    
+    def __mod__(self: UInt[N], other: UInt[N]) -> UInt[N]:
+        if other == MPC_RING_SIZE:
+            return self.__fast_mod_ring()
+        elif other == MPC_FIELD_SIZE:
+            return self.__fast_mod_field()
+        elif N > 128:
+            return self.gmp_mod(other)
+        else:
+            return self.__naive_mod(other)
+    
+    def __repr__(self: UInt[N]) -> str:
+        # TODO: Implement faster solution
+        self_cp = self
+        int_str = ''
+        while self_cp:
+            remainder = 0
+            quotient = UInt[N](0)
+            # Euclidean division
+            for bit_idx in staticrange(N - 1, -1, -1):
+                mask = int((self_cp & (UInt[N](1) << UInt[N](bit_idx))) != UInt[N](0))
+                remainder = (remainder << 1) + mask
+                if remainder >= 10:
+                    quotient = (quotient << UInt[N](1)) + UInt[N](1)
+                    remainder -= 10
+                else: quotient = quotient << UInt[N](1)
+            int_str = str(remainder) + int_str
+            self_cp = quotient
+        return int_str if int_str else '0'
+    
+    def split_lo_hi_u64(self: UInt[64]) -> Tuple[UInt[64], UInt[64]]:
+        self_lo = self & MASK32
+        self_hi = self >> 32
+        
+        return self_hi, self_lo
+    
+    def add_overflow(self: UInt[N], other: UInt[N]) -> Tuple[UInt[N], UInt[N]]:
+        s, overflow = self.raw_add_overflow(other)
+        return s, UInt[N](overflow)
+    
+    def mul_overflow(a: UInt[N], b: UInt[N]) -> Tuple[UInt[N], UInt[N]]:
+        a_hi, a_lo = a.split_lo_hi()
+        b_hi, b_lo = b.split_lo_hi()
+
+        ll = a_lo * b_lo
+        hl = a_hi * b_lo
+        lh = a_lo * b_hi
+        hl_hi, hl_lo = hl.split_lo_hi()
+        lh_hi, lh_lo = lh.split_lo_hi()
+        
+        s, overflow_1 = ll.add_overflow(hl_lo << (N // 2))
+        s, overflow_2 = s.add_overflow(lh_lo << (N // 2))
+
+        return a_hi * b_hi + hl_hi + lh_hi + overflow_1 + overflow_2, s
+    
+    def mul_overflow_u64(a: UInt[64], b: UInt[64]) -> Tuple[UInt[64], UInt[64]]:
+        p = a.ext_to(128) * b.ext_to(128)
+        return (p >> 64).trunc_to(64), p.trunc_to(64)
+    
+    def bit_reverse_subset(self: UInt[N], bitlen: int) -> UInt[N]:
+        return self.bit_reverse() >> UInt[N](N - bitlen)
+    
+    def __fast_mod_mersenne(self: UInt[N], field_size: UInt[N] = MPC_FIELD_SIZE):
+        """
+        Bit-hack for computing modulus with the field size of the form 2^k - 1 (Mersenne form of a prime).
+        There is no explicit check for the shape of the field,
+        so please make sure that the field_size is a Mersenne prime if you use this method.
+        """
+        n = self
+        m = n
+        while n > field_size:
+            m = UInt[N](0)
+            while n:
+                m += (n & field_size)
+                n >>= MPC_MODULUS_BITS
+            n = m
+        if m == field_size: m = UInt[N](0)
+        return m
+    
+    def __fast_mod_mersenne_fixed(self: UInt[N], field_size: UInt[N] = MPC_FIELD_SIZE):
+        """
+        Bit-hack for computing modulus with the field size equal to 2^127 - 1.
+        There is no explicit check for the shape of the field,
+        so please make sure that the field_size is equal to 2^127 - 1.
+        """
+        n = self
+        if n < field_size: return n
+        if n == field_size: return UInt[N](0)
+
+        m = (n & field_size)
+        n >>= UInt[N](127)
+        m += n
+        m = (m & field_size) + (m >> UInt[N](127))
+        
+        if m == field_size: return UInt[N](0)
+        return m
+    
+    def __fast_mod_semi_mersenne(self: UInt[N], field_size: UInt[N] = MPC_FIELD_SIZE, ring_mask: UInt[N] = MPC_RING_MASK, modulus_bits: int = MPC_MODULUS_BITS, s: int = 3):
+        """
+        Bit-hack for computing modulus with the field size of the form 2^k - s (semi-Mersenne).
+        There is no explicit check for the shape of the field,
+        so please make sure that the field_size has the form 2^k - s if you use this method.
+        """
+        m = (self & ring_mask) + ((self >> modulus_bits) * s)
+        while m > ring_mask: m = (m & ring_mask) + ((m >> modulus_bits) * s)
+        if m >= field_size: return m - field_size
+        return m
+    
+    def __fast_mod_semi_mersenne_fixed(self: UInt[N], field_size: UInt[N] = MPC_FIELD_SIZE, ring_mask: UInt[N] = MPC_RING_MASK):
+        """
+        Bit-hack for computing modulus with the field size of the form 2^174 - 3 (semi-Mersenne).
+        There is no explicit check for the shape of the field,
+        so please make sure that the field_size has the form 2^174 - 3 if you use this method.
+        """
+        m = (self & ring_mask) + ((self >> 174) * 3)
+        m = (m & ring_mask) + ((m >> 174) * 3)
+        if m >= field_size: return m - field_size
+        return m
+    
+    def __fast_mod_field(self: UInt[N]):
+        if isinstance(self, UInt[192]):
+            return self.__fast_mod_semi_mersenne_fixed()
+        if isinstance(self, UInt[128]):
+            return self.__fast_mod_mersenne_fixed()
+        
+        return self.gmp_mod(MPC_FIELD_SIZE)
+    
+    def __fast_mod_ring(self: UInt[N]) -> UInt[N]:
+        return self & MPC_RING_MASK
+    
+    def __fast_mod_aided_64_bits(self, q: u64) -> u64:
+        return self.__fast_mod_aided_64_bits_mod_const(q, u64(-1).__naive_mod(q) + 1)
+    
+    def __fast_mod_aided_64_bits_mod_const(self, q: u64, mod_const: u64) -> u64:
+        """
+        Modular reduction hack that uses the fact that divisor (q) is less than 64 bits:
+        
+        mod_const = 2^64 % q
+        self % q = ((mod_const * self // 2^64) % q + self % 2^64) % q
+        """
+        if self.bitlen() <= UInt[N](64):
+            return self.trunc_to(64).__naive_mod(q)
+        
+        offset = (mod_const.ext_to(N) * (self >> 64)).__fast_mod_aided_64_bits_mod_const(q, mod_const)
+        residue, overflow = (self & u64(-1).ext_to(N)).trunc_to(64).add_overflow(offset)
+
+        return (residue.__naive_mod(q) + overflow * mod_const).__naive_mod(q)
+    
+    def neg_mod(self, modulus) -> UInt[N]:
+        return self.fixed_value(modulus) - self
+    
+    def add_mod(self, other, modulus) -> UInt[N]:
+        return (self + other) % modulus
+    
+    def sub_mod(self, other, modulus) -> UInt[N]:
+        return (self + modulus - other) % modulus
+    
+    def mul_mod(self, other, modulus) -> UInt[N]:
+        if DEBUG:
+            assert modulus > 0, f"Mod by non-positive value {other} (in mul_mod) not supported"
+            assert other >= 0, f"Cannot mul UInt by negative value for security reasons"
+        
+        if modulus == MPC_RING_SIZE:
+            if not isinstance(self, u64) and isinstance(other, u64):
+                # Assume other is shorter than self
+                return (self * UInt[N].upcast(other)) & MPC_RING_MASK
+            else:
+                return (self * other) & MPC_RING_MASK
+        
+        if modulus == MPC_FIELD_SIZE:
+            if isinstance(self, UInt[128]):
+                if isinstance(other, UInt[N]):
+                    return modular_mul_u128u128_v1(self, other)
+                if isinstance(other, u64) or isinstance(other, int):
+                    return modular_mul_u128u64_v1(self, u64(other))
+            
+            elif isinstance(self, UInt[192]):
+                if isinstance(other, UInt[N]):
+                    return modular_mul_u192u192(self, other)
+                if isinstance(other, u64) or isinstance(other, int):
+                    return modular_mul_u192u64(self, u64(other))
+            
+            if isinstance(other, int):
+                return self.gmp_mul_mod_si(other, modulus)
+            elif isinstance(other, u64):
+                return self.gmp_mul_mod_ui(other, modulus)
+            else:
+                return self.gmp_mul_mod(other, modulus)
+        
+        if DEBUG:
+            assert self == int(self), f"Factor {self} is not within the length of 64 bits.\nIt must be no longer than 64 bits if the modulus differs the size of field/ring."
+            assert other == int(other), f"Factor {other} is not within the length of 64 bits.\nIt must be no longer than 64 bits if the modulus differs the size of field/ring."
+            assert modulus == int(modulus), f"Modulus {modulus} is not within the length of 64 bits.\nIt must be no longer than 64 bits if it differs the size of field/ring."
+        
+        return UInt[N]((int(self) * int(other)) % int(modulus))        
+
+    def pow_mod(self, other, modulus) -> UInt[N]:
+        return mod_pow(self, other, modulus)
+
+    def lsh_mod(self: UInt[N], other: int, modulus) -> UInt[N]:
+        if DEBUG: assert other <= MPC_MODULUS_BITS, f'Cannot left shift more than the length of modulus: {MPC_MODULUS_BITS}'
+        if modulus == MPC_RING_SIZE: return (self << other) & MPC_RING_MASK
+        if modulus == MPC_FIELD_SIZE:
+            s = (self << other) & MPC_RING_MASK
+            s += (self >> (MPC_MODULUS_BITS - other)) * MPC_MERSENNE_OFFSET
+            return (s & MPC_RING_MASK) + (s >> MPC_MODULUS_BITS) * MPC_MERSENNE_OFFSET
+        raise ValueError(f"Invalid modulus for modular multiplication: {modulus}")
+    
+    def iter(self: UInt[N]):
+        for _ in staticrange(1): yield self
+    
+    @staticmethod
+    def size() -> int:
+        return 1
+    
+    @staticmethod
+    def rand(base: UInt[N], distribution: str) -> UInt[N]:
+        assert distribution == UNIFORM_DISTRIBUTION, "Not implemented yet: random distributions other than uniform"
+        return __rand_int(base)
+    
+    @staticmethod
+    def rand_bits(bitlen: int) -> UInt[N]:
+        return __rand_bits(bitlen)
+    
+    @staticmethod
+    def zeros() -> UInt[N]:
+        return UInt[N](0)
+    
+    @staticmethod
+    def zeros_float() -> float:
+        return 0.0
+    
+    @staticmethod
+    def ones() -> UInt[N]:
+        return UInt[N](1)
+    
+    def copy(self: UInt[N]) -> UInt[N]:
+        return UInt[N](self)
+    
+    def has_zero(self: UInt[N]) -> bool:
+        return self == UInt[N](0)
+    
+    def to_int(self: UInt[N]) -> int:
+        return int(self)
+    
+    def to_intn(self: UInt[N]) -> Int[N]:
+        return Int[N](self)
+    
+    def to_float(self: UInt[N]) -> float:
+        # TODO: Implement a more efficient and hardware-friendly solution
+        if N <= 64: return float(self)
+
+        bl = self.bitlen()
+        if bl <= UInt[N](64): return float(self.trunc_to(64))
+
+        exponent = bl - UInt[N](63)
+        mantissa = float((self >> exponent).trunc_to(64))
+        return mantissa * (2.0 ** float(exponent.trunc_to(64)))
+    
+    def to_complex(self: UInt[N]) -> complex:
+        return self.to_float().to_complex()
+    
+    @staticmethod
+    def fixed_value(value) -> UInt[N]:
+        return UInt[N](value)
+    
+    @staticmethod
+    def nbytes() -> int:
+        return (N + 7) // 8
+    
+    @staticmethod
+    def _pickle_size() -> int:
+        return UInt[N].nbytes()
+    
+    def flatten(self) -> UInt:
+        return self
+
+
+@extend
+class Int:
+    def __new__(other) -> Int[N]:
+        if isinstance(other, int): return superf(other)
+        elif isinstance(other, float):
+            negative = other < 0
+            if negative: other = -other
+            other_int = Int[N](UInt[N](other))
+            if negative: return -other_int
+            return other_int
+        else: return superf(other)
+    
+    def __fast_mod_aided_64_bits(self, q: u64) -> u64:
+        s_neg = self < Int[N](0)
+        if s_neg: self = -self
+        
+        r = UInt[N](self).__fast_mod_aided_64_bits(q)
+        if s_neg:
+            return q - r
+        
+        return r
+    
+    def __fast_mod_aided_64_bits_mod_const(self, q: u64, mod_const: u64) -> u64:
+        s_neg = self < Int[N](0)
+        if s_neg: self = -self
+        
+        r = UInt[N](self).__fast_mod_aided_64_bits_mod_const(q, mod_const)
+        if s_neg:
+            return q - r
+        
+        return r
+    
+    def bitlen(self: Int[N]) -> Int[N]:
+        if self < Int[N](0): self = -self
+        return Int[N](UInt[N](self).bitlen())
+    
+    def to_float(self: Int[N]) -> float:
+        # TODO: Implement a more efficient and hardware-friendly solution        
+        if N <= 64: return float(self)
+
+        sign = 1.0
+        if self >> Int[N]((N - 1)):  # Case negative
+            self = -self
+            sign = -1.0
+
+        return UInt[N](self).to_float() * sign
+    
+    def to_complex(self: Int[N]):
+        return self.to_float().to_complex()
+    
+    def __repr__(self: Int[N]) -> str:
+        negative = self < Int[N](0)
+        if negative: self = -self
+        _str = UInt[N](self).__repr__()
+        if negative: return f"-{_str}"
+        return _str
+    
+    @staticmethod
+    def nbytes() -> int:
+        return (N + 7) // 8
+    
+    @staticmethod
+    def _pickle_size() -> int:
+        return Int[N].nbytes()
+    
+    def flatten(self) -> Int:
+        return self
+
+
+@extend
+class List:
+    def __getitem__(self: list[T], i: u64) -> T:
+        return self[int(i)]
+    
+    def __setitem__(self: list[T], i: u64, other: T) -> T:
+        self[int(i)] = other
+    
+    def __getitem__(self: list[T], l: list[u64]) -> list[T]:
+        return self[[int(e) for e in l]]
+    
+    def __setitem__(self: list[T], l: list[u64], other: generator[T]):
+        self[[int(e) for e in l]] = other
+    
+    def __getitem__(self: list[T], l: list[int]) -> list[T]:
+        new_arr = list[T](len(l))
+        for i in range(len(l)): new_arr.append(self[l[i]])
+        return new_arr
+    
+    def __setitem__(self: list[T], l: list[int], other: generator[T]):
+        for i in range(len(l)): self[l[i]] = next(other)
+    
+    def __getitem__(self: list[T], s: Tuple[slice, slice]) -> list[T]:
+        rs, cs = s
+        sliced_arr = self[rs]
+        new_arr = list[T](len(sliced_arr))
+        for i in range(len(sliced_arr)): new_arr.append(sliced_arr[i][cs])
+        return new_arr
+    
+    def __setitem__(self: list[T], s: Tuple[slice, slice], other: generator[T]):
+        rs, cs = s
+        start, stop, _, _ = rs.adjust_indices(len(self))
+        for i in range(start, stop):
+            self[i][cs] = next(other)
+
+    def __getitem__[T1](self: list[list[T1]], s: Tuple[slice, int]) -> list[T1]:
+        rs, cs = s
+        sliced_arr = self[rs]
+        new_arr = list[T1](len(sliced_arr))
+        for i in range(len(sliced_arr)): new_arr.append(sliced_arr[i][cs])
+        return new_arr
+
+    def __setitem__[T1](self: list[list[T1]], s: Tuple[slice, int], other: generator[T1]):
+        rs, cs = s
+        start, stop, _, _ = rs.adjust_indices(len(self))
+        for i in range(start, stop):
+            self[i][cs] = next(other)
+    
+    def __getitem__[T1](self: list[list[T1]], s: Tuple[int, slice]) -> list[T1]:
+        ri, cs = s
+        return self[ri][cs]
+
+    def __setitem__[T1](self: list[list[T1]], s: Tuple[int, slice], other: generator[T1]):
+        ri, cs = s
+        start, stop, _, _ = cs.adjust_indices(len(self))
+        for j in range(start, stop):
+            self[ri][j] = next(other)
+    
+    def __getitem__[T1](self: list[list[T1]], s: Tuple[int, int]) -> T1:
+        i, j = s
+        return self[i][j]
+
+    def __setitem__[T1](self: list[list[T1]], s: Tuple[int, int], other: T1):
+        i, j = s
+        self[i][j] = other
+
+    def __setitem__(self: list[T], s: Tuple[slice, slice], other: mpc_uint):
+        rs, cs = s
+        start_row, stop_row, _, _ = rs.adjust_indices(len(self))
+        start_col, stop_col, _, _ = cs.adjust_indices(len(self[0]))
+        for i in range(start_row, stop_row):
+            for j in range(start_col, stop_col):
+                self[i][j] = other
+
+    def __abs__(self: list[T]) -> list[T]:
+        return self.abs()
+    
+    def __neg__(self: list[T]) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(-s)
+        return l
+
+    def __iadd__(self: list[T], other: list[T]) -> list[T]:
+        for i, o in enumerate(other):
+            self[i] += o
+        return self
+
+    def __add__(self: list[T], other: list[T]) -> list[T]:
+        l = list[T](len(self))
+        for s, o in zip(self, other): l.append(s + o)
+        return l
+    
+    def __iadd__(self: list[list[mpc_uint]], other: list[mpc_uint]) -> list[list[mpc_uint]]:
+        self_shape = self.shape
+        if self_shape[1] != len(other):
+            raise ValueError(f"Unsupported dimensions. Trying to add shapes {self_shape} and [{len(other)},]")
+
+        for i in range(self_shape[0]): self[i] += other
+        return self
+
+    def __add__(self: list[list[mpc_uint]], other: list[mpc_uint]) -> list[list[mpc_uint]]:
+        l = list[list[mpc_uint]](len(self))
+        self_shape = self.shape
+        if self_shape[1] != len(other):
+            raise ValueError(f"Unsupported dimensions. Trying to add shapes {self_shape} and [{len(other)},]")
+
+        for s in self: l.append(s + other)
+        return l
+    
+    def __iadd__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] += scalar
+        return self
+
+    def __add__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s + scalar)
+        return l
+    
+    def __iadd__(self: list[T], scalar: float) -> list[T]:
+        for i in range(len(self)):
+            self[i] += scalar
+        return self
+
+    def __add__(self: list[T], scalar: float) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s + scalar)
+        return l
+    
+    def __iadd__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] += scalar
+        return self
+
+    def __add__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s + scalar)
+        return l
+
+    def __isub__(self: list[T], other: list[T]) -> list[T]:
+        for i, o in enumerate(other):
+            self[i] -= o
+        return self
+
+    def __sub__(self: list[T], other: list[T]) -> list[T]:
+        l = list[T](len(self))
+        for s, o in zip(self, other): l.append(s - o)
+        return l
+
+    def __isub__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] -= scalar
+        return self
+
+    def __sub__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s - scalar)
+        return l
+
+    def __isub__(self: list[T], scalar: float) -> list[T]:
+        for i in range(len(self)):
+            self[i] -= scalar
+        return self
+
+    def __sub__(self: list[T], scalar: float) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s - scalar)
+        return l
+    
+    def __isub__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] -= scalar
+        return self
+
+    def __sub__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s - scalar)
+        return l
+
+    def __matmul__(self: list[T], other: list[T]) -> list[T]:
+        return self.matmul(other)
+
+    def __imul__(self: list[T], other: list[T]) -> list[T]:
+        for i, o in enumerate(other):
+            self[i] *= o
+        return self
+
+    def __mul__(self: list[T], other: list[T]) -> list[T]:
+        l = list[T](len(self))
+        for s, o in zip(self, other): l.append(s * o)
+        return l
+    
+    def __imul__(self: list[T], other: T) -> list[T]:
+        for i in range(len(self)):
+            self[i] *= other
+        return self
+
+    def __mul__(self: list[T], other: T) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s * other)
+        return l
+
+    def __imul__(self: list[mpc_uint], other: list[int]) -> list[T]:
+        for i, o in enumerate(other):
+            self[i] *= o
+        return self
+
+    def __mul__(self: list[mpc_uint], other: list[int]) -> list[T]:
+        l = list[T](len(self))
+        for s, o in zip(self, other): l.append(s * o)
+        return l
+    
+    def __imul__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] *= scalar
+        return self
+
+    def __mul__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s * scalar)
+        return l
+    
+    def __imul__(self: list[T], scalar: float) -> list[T]:
+        for i in range(len(self)):
+            self[i] *= scalar
+        return self
+
+    def __mul__(self: list[T], scalar: float) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s * scalar)
+        return l
+    
+    def __imul__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] *= scalar
+        return self
+
+    def __mul__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s * scalar)
+        return l
+    
+    def __itruediv__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] /= scalar
+        return self
+
+    def __truediv__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s / scalar)
+        return l
+    
+    def __itruediv__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] /= scalar
+        return self
+
+    def __truediv__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s / scalar)
+        return l
+
+    def __ifloordiv__(self: list[T], other: list[int]) -> list[T]:
+        for i in range(len(self)):
+            self[i] //= other[i]
+        return self
+
+    def __floordiv__(self: list[T], other: list[int]) -> list[T]:
+        l = list[T](len(self))
+        for s, o in zip(self, other): l.append(s // o)
+        return l
+    
+    def __ifloordiv__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] //= scalar
+        return self
+
+    def __floordiv__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s // scalar)
+        return l
+    
+    def __ifloordiv__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] //= scalar
+        return self
+
+    def __floordiv__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s // scalar)
+        return l
+
+    def __imod__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] %= scalar
+        return self
+
+    def __mod__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s % scalar)
+        return l
+    
+    def __imod__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] %= scalar
+        return self
+
+    def __mod__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s % scalar)
+        return l
+
+    def __ipow__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] **= scalar
+        return self
+
+    def __pow__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s ** scalar)
+        return l
+    
+    def __ipow__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] **= scalar
+        return self
+
+    def __pow__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s ** scalar)
+        return l
+    
+    def __iand__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] &= scalar
+        return self
+
+    def __and__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s & scalar)
+        return l
+    
+    def __iand__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] &= scalar
+        return self
+
+    def __and__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s & scalar)
+        return l
+    
+    def __ior__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] |= scalar
+        return self
+
+    def __or__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s | scalar)
+        return l
+    
+    def __ixor__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] ^= scalar
+        return self
+
+    def __xor__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s ^ scalar)
+        return l
+
+    def __ilshift__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] <<= scalar
+        return self
+
+    def __lshift__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s << scalar)
+        return l
+
+    def __irshift__(self: list[T], scalar: mpc_uint) -> list[T]:
+        for i in range(len(self)):
+            self[i] >>= scalar
+        return self
+
+    def __rshift__(self: list[T], scalar: mpc_uint) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s >> scalar)
+        return l
+    
+    def __ilshift__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] <<= scalar
+        return self
+
+    def __lshift__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s << scalar)
+        return l
+    
+    def __irshift__(self: list[T], scalar: int) -> list[T]:
+        for i in range(len(self)):
+            self[i] >>= scalar
+        return self
+
+    def __rshift__(self: list[T], scalar: int) -> list[T]:
+        l = list[T](len(self))
+        for s in self: l.append(s >> scalar)
+        return l
+    
+    def __lt__(self: list[T], other: list[T]) -> bool:
+        # TODO: Change to reflect numpy's behavior
+        if DEBUG: assert len(self) == len(other), 'Comparing lists of different sizes'
+
+        for s, o in zip(self, other):
+            if s < o: continue
+            else: return False
+
+        return True
+
+    def __gt__(self: list[T], other: list[T]) -> bool:
+        # TODO: Change to reflect numpy's behavior
+        if DEBUG: assert len(self) == len(other), 'Comparing lists of different sizes'
+        
+        for s, o in zip(self, other):
+            if s > o: continue
+            else: return False
+
+        return True
+
+    def __ge__(self: list[T], other: list[T]) -> bool:
+        # TODO: Change to reflect numpy's behavior
+        if DEBUG: assert len(self) == len(other), 'Comparing lists of different sizes'
+
+        for s, o in zip(self, other):
+            if s >= o: continue
+            else: return False
+
+        return True
+
+    def __le__(self: list[T], other: list[T]) -> bool:
+        # TODO: Change to reflect numpy's behavior
+        if DEBUG: assert len(self) == len(other), 'Comparing lists of different sizes'
+
+        for s, o in zip(self, other):
+            if s <= o: continue
+            else: return False
+
+        return True
+    
+    def abbrv(self: list[T]) -> str:
+        if len(self) > 10:
+            return f"First 10 of {len(self)}: {[(self[i].abbrv() if isinstance(self[i], list) else self[i]) for i in range(10)]}"
+        return self.__repr__()
+
+    def all(self) -> bool:
+        if not self:
+            return False
+        
+        for e in self:
+            if not bool(e):
+                return False
+        
+        return True
+    
+    def any(self) -> bool:
+        for e in self:
+            if bool(e):
+                return True
+        return False
+    
+    def same(self) -> bool:
+        if not self:
+            return True
+        
+        ref_elem = self[0]
+        for i in range(1, len(self)):
+            if self[i] != ref_elem:
+                return False
+        
+        return True
+    
+    def astype(self, t: type):
+        return [e.astype(t) for e in self]
+    
+    def neg_mod(self: list[T], modulus) -> list[T]:
+        return [self[i].neg_mod(modulus) for i in range(len(self))]
+
+    def add_mod(self: list[T], other, modulus) -> list[T]:
+        if isinstance(other, ByVal) or isinstance(other, T):
+            return [self[i].add_mod(other, modulus) for i in range(len(self))]
+        elif isinstance(other, list):
+            s_shape = self.shape
+            o_shape = other.shape
+            assert other.ndim <= self.ndim, f"List.add_mod: cannot broadcast {o_shape} to {s_shape}"
+
+            if o_shape.reduce_mul() == 1:
+                return self.add_mod(other[0], modulus)
+            
+            if s_shape == o_shape:
+                return [self[i].add_mod(other[i], modulus) for i in range(len(self))]
+            
+            assert self.ndim == other.ndim == 2, f"List.add_mod: cannot broadcast {o_shape} to {s_shape}"
+            
+            if o_shape[0] == 1:
+                assert s_shape[1] == o_shape[1], f"List.add_mod: cannot broadcast {o_shape} to {s_shape}"
+                o = other[0]
+                return [self[i].add_mod(o, modulus) for i in range(len(self))]
+            
+            if o_shape[1] == 1:
+                assert s_shape[0] == o_shape[0], f"List.add_mod: cannot broadcast {o_shape} to {s_shape}"
+                return [self[i].add_mod(other[i], modulus) for i in range(len(self))]
+
+            raise ValueError(f"List: shapes mismatch for add_mod: {s_shape} != {o_shape}")
+        else:
+            compile_error("invalid operand type")
+        
+    def sub_mod(self: list[T], other, modulus) -> list[T]:
+        if isinstance(other, ByVal) or isinstance(other, T):
+            return [self[i].sub_mod(other, modulus) for i in range(len(self))] 
+        elif isinstance(other, list):
+            s_shape = self.shape
+            o_shape = other.shape
+            assert other.ndim <= self.ndim, f"List.sub_mod: cannot broadcast {o_shape} to {s_shape}"
+
+            if o_shape.reduce_mul() == 1:
+                return self.sub_mod(other[0], modulus)
+            
+            if s_shape == o_shape:
+                return [self[i].sub_mod(other[i], modulus) for i in range(len(self))]
+            
+            assert self.ndim == other.ndim == 2, f"List.sub_mod: cannot broadcast {o_shape} to {s_shape}"
+
+            if o_shape[0] == 1:
+                assert s_shape[1] == o_shape[1], f"List.sub_mod: cannot broadcast {o_shape} to {s_shape}"
+                o = other[0]
+                return [self[i].sub_mod(o, modulus) for i in range(len(self))]
+            
+            if o_shape[1] == 1:
+                assert s_shape[0] == o_shape[0], f"List.sub_mod: cannot broadcast {o_shape} to {s_shape}"
+                return [self[i].sub_mod(other[i], modulus) for i in range(len(self))]
+
+            raise ValueError(f"List: shapes mismatch for sub_mod: {s_shape} != {o_shape}")
+        else:
+            compile_error("invalid operand type")
+        
+    def pow_mod(self: list[T], other, modulus) -> list[T]:
+        return [self[i].pow_mod(other, modulus) for i in range(len(self))]
+
+    def mul_mod(self: list[T], other, modulus) -> list[T]:
+        if isinstance(other, ByVal) or isinstance(other, T):
+            return [self[i].mul_mod(other, modulus) for i in range(len(self))]
+        elif isinstance(other, list):
+            s_shape = self.shape
+            o_shape = other.shape
+            assert other.ndim <= self.ndim, f"List.mul_mod: cannot broadcast {o_shape} to {s_shape}"
+
+            if o_shape.reduce_mul() == 1:
+                return self.mul_mod(other[0], modulus)
+            
+            if s_shape == o_shape:
+                return [self[i].mul_mod(other[i], modulus) for i in range(len(self))]
+            
+            assert self.ndim == other.ndim == 2, f"List.mul_mod: cannot broadcast {o_shape} to {s_shape}"
+
+            if o_shape[0] == 1:
+                assert s_shape[1] == o_shape[1], f"List.mul_mod: cannot broadcast {o_shape} to {s_shape}"
+                o = other[0]
+                return [self[i].mul_mod(o, modulus) for i in range(len(self))]
+            
+            if o_shape[1] == 1:
+                assert s_shape[0] == o_shape[0], f"List.mul_mod: cannot broadcast {o_shape} to {s_shape}"
+                return [self[i].mul_mod(other[i], modulus) for i in range(len(self))]
+
+            raise ValueError(f"List: shapes mismatch for mul_mod: {s_shape} != {o_shape}")            
+        else:
+            compile_error("invalid operand type")
+
+    def lsh_mod(self: list[T], other: int, modulus) -> list[T]:
+        return [self[i].lsh_mod(other, modulus) for i in range(len(self))]
+    
+    def broadcast_add_mod(self: list[T], other, modulus) -> list[T]:
+        return [self[i].add_mod(other, modulus) for i in range(len(self))]
+    
+    def sum_mod(self: list[T], modulus) -> T:
+        s = self[0]
+        for i in range(1, len(self)): s = s.add_mod(self[i], modulus)
+        return s
+    
+    def numpy_eq(self: list[T], other: list[T]) -> list[T]:
+        #TODO: Make this a native __eq__ of list
+        #TODO: Make it work for all shapes.
+        return [T(s == o) for s, o in zip(self, other)]
+
+    def naive_matmul_mod_transposed(self: list[T], other: list[T], modulus) -> list[T]:
+        self_shape = self.shape
+        other_shape = other.shape
+        assert self_shape[1] == other_shape[0], f"Not aligned shapes {self_shape} and {other_shape} for matmul"
+
+        new_mat = list[T](self_shape[0])
+        other_t = other.transpose()
+
+        for i in range(self_shape[0]):
+            new_row = list[type(modulus)](other_shape[1])
+            for j in range(other_shape[1]):
+                cell_value = type(modulus)(0)
+                for k in range(self_shape[1]):
+                    cell_value = cell_value.add_mod(self[i][k].mul_mod(other_t[j][k], modulus), modulus)
+                new_row.append(cell_value)
+            new_mat.append(new_row)
+
+        return new_mat
+    
+    def naive_matmul_mod(self: list[T], other: list[T], modulus) -> list[T]:
+        self_shape = self.shape
+        other_shape = other.shape
+        assert self_shape[1] == other_shape[0], f"Not aligned shapes {self_shape} and {other_shape} for matmul"
+
+        new_mat = list[T](self_shape[0])
+
+        for i in range(self_shape[0]):
+            new_row = list[type(modulus)](other_shape[1])
+            for j in range(other_shape[1]):
+                cell_value = type(modulus)(0)
+                for k in range(self_shape[1]):
+                    cell_value = cell_value.add_mod(self[i][k].mul_mod(other[k][j], modulus), modulus)
+                new_row.append(cell_value)
+            new_mat.append(new_row)
+
+        return new_mat
+    
+    def matmul_mod(self: list[T], other: list[T], modulus) -> list[T]:
+        return self.naive_matmul_mod_transposed(other, modulus)
+    
+    def matmul(self: list[T], other: list[T]) -> list[T]:
+        self_shape = self.shape
+        other_shape = other.shape
+        assert self_shape[1] == other_shape[0], f"Not aligned shapes {self_shape} and {other_shape} for matmul"
+
+        new_mat = list[T](self_shape[0])
+        other_t = other.transpose()
+
+        for i in range(self_shape[0]):
+            new_row = list[type(self[0][0])](other_shape[1])
+            for j in range(other_shape[1]):
+                cell_value = type(self[0][0])(0)
+                for k in range(self_shape[1]):
+                    cell_value = cell_value + self[i][k] * other_t[j][k]
+                new_row.append(cell_value)
+            new_mat.append(new_row)
+
+        return new_mat
+
+    @property
+    def shape(self: list[T]):
+        if isinstance(T, ByVal): return [len(self)]
+        return [len(self), len(self[0])]
+    
+    @property
+    def actual_shape(self: list[T]):
+        return self.shape
+    
+    @staticmethod
+    def _ndim(dim: int = 0):
+        if isinstance(T, list): return T._ndim(dim + 1)
+        else: return dim + 1
+    
+    @property
+    def ndim(self: list[T]):
+        return list[T]._ndim()
+    
+    def size(self: list[T]) -> int:
+        if isinstance(T, list[list]):
+            compile_error("Sequre list does not support dimensions higher than 2.")
+        
+        if isinstance(T, list):
+            return len(self) * len(self[0])
+        
+        return len(self)
+
+    def transpose(self: list[T]) -> list[T]:
+        if not self:
+            return self
+        
+        if isinstance(T, list[list]):
+            compile_error("List.transpose: Cannot transpose dimension larger than 2")
+        elif isinstance(T, list):
+            rows, cols = self.shape
+            return [[self[j][i] for j in range(rows)] for i in range(cols)]
+        else:
+            return self
+
+    def flatten_numpy(self: list[T]):
+        return array(self).flatten().tolist()
+    
+    def flatten(self: list[T]):
+        if isinstance(T, list[list]):
+            compile_error("List.flatten: Cannot flatten dimension larger than 2")
+        elif not isinstance(T, list):
+            return self
+        else:
+            return [e for row in self for e in row]
+
+    def unfence(self: list[T], *args):
+        return self._conditional_iop(T.extend, *args, PREPEND_ARGS=1)
+
+    def resize(self: list[T], shape) -> list[T]:
+        if self.shape == shape:
+            return self
+                
+        if isinstance(T, list[list]):
+            compile_error("List.resize: Cannot resize dimension larger than 2")
+        elif isinstance(T, list):
+            new_rows, new_cols = shape
+            old_rows, old_cols = self.shape
+
+            new_array = zeros_mat(new_rows, new_cols, TP=T.T)
+            for i in range(min(old_rows, new_rows)):
+                for j in range(min(old_cols, new_cols)):
+                    new_array[i][j] = self[i][j]
+            return new_array
+        else:
+            new_array = zeros_vec(shape[0], TP=T)
+            for i in range(min(shape[0], len(self))):
+                new_array[i] = self[i]
+            return new_array
+    
+    def reshape_numpy(self: list[T], shape):
+        return array(self).reshape(shape).tolist()
+    
+    def reshape(self: list[T], shape: list[int]):
+        if isinstance(T, list[list]):
+            compile_error("List.reshape: Cannot reshape list of dimension larger than 2")
+        elif not isinstance(T, list):  # List
+            assert len(shape) == 2, f"List.reshape: Only reshape to matrix is supported at the moment. Provided shape: {shape}"
+            rows, cols = shape
+            assert rows * cols == len(self), f"List.reshape: Shapes mismatch. ({len(self)}, ) cannot be reshaped into {shape}"
+
+            new_mat = list[list[T]](rows)
+            for i in range(rows):
+                new_mat.append(self[i * cols:(i + 1) * cols])
+            
+            return new_mat
+        else:  # Matrix
+            rows, cols = shape
+            _, old_cols = self.shape
+            new_mat = list[T](rows)
+            position = 0
+            first_elem = self[0][0]
+
+            for _ in range(rows):
+                row = list[type(first_elem)](cols)
+                for _ in range(cols):
+                    old_i = position // old_cols
+                    old_j = position % old_cols
+                    row.append(self[old_i][old_j])
+                    position += 1
+                new_mat.append(row)
+
+            return new_mat
+    
+    def expand_dims(self, axis: int = 0) -> List[List[T]]:
+        assert 0 <= axis < self.ndim, "List: axis out of range for expand dim"
+        assert axis <= 1, "Not implemented yet: expanding list dimension over arbitrary axis"
+
+        if axis == 0:
+            return [self]
+        else:  # axis == 1
+            return [[e] for e in self]
+    
+    def erase_element(self, index: int) -> List[T]:
+        assert self.ndim == 1, "Not implemented yet: List erase_element for arbitrary dimension"
+
+        new_arr = [T(0) for _ in range(len(self) - 1)]
+
+        for i in range(index):
+            new_arr[i] = self[i]
+
+        for i in range(index + 1, len(self)):
+            new_arr[i - 1] = self[i]
+        
+        return new_arr
+    
+    def local_broadcast[S2](self, target_shape: S2) -> List[T]:
+        if self.shape == list(target_shape):
+            return self
+        
+        assert self.ndim == len(target_shape) == 1, f"Not implemented yet: broadcasting {self.ndim}-dimensional to {len(target_shape)}-dimensional list"
+        assert target_shape[0] > self.shape[0], "List: cannot broadcast to a smaller size"
+        return [self[0] for _ in range(target_shape[0])]
+
+    def irotate(self: list[T], step: int) -> list[T]:
+        step = (len(self) + step) % len(self)
+
+        if step == 0:
+            return self
+
+        self.extend(self[:step])
+        del self[:step]
+        
+        return self
+
+    def rotate(self: list[T], step: int) -> list[T]:
+        if step == 0:
+            return self.copy()
+
+        step = (len(self) + step) % len(self)
+        new_list = self[step:]
+        new_list.extend(self[:step])
+        return new_list
+    
+    def shift_like_cipher(self: list[T], step: int, slots: int, cols: int) -> list[T]:
+        if isinstance(T, list):
+            return [row.shift_like_cipher(step, slots, cols) for row in self]
+        
+        rotated_values_cohort = self.rotate(step)
+        shifted_values = zeros_vec(slots, TP=T)
+        
+        for i in range(step):
+            shifted_values[-i - 1] = rotated_values_cohort[-i - 1]
+            rotated_values_cohort[-i - 1] = T(0)
+        shifted_values.extend(rotated_values_cohort)
+        
+        if cols % slots:
+            shifted_values.extend(zeros_vec(slots - (cols % slots), TP=T))
+        
+        return shifted_values
+
+    def iter(self: list[T]):
+        for v in self:
+            for b in v.iter():
+                yield b
+    
+    def to_int_t(self: list[T], modulus: mpc_uint):
+        return [e.to_int_t(modulus) for e in self]
+    
+    def pad_vec_inplace(self: list[T], length: int) -> list[T]:
+        pad_length = length - len(self)
+
+        if pad_length < 0:
+            for _ in range(-pad_length): self.pop()
+        elif pad_length > 0:
+            for _ in range(pad_length): self.append(T(0))
+        
+        return self
+    
+    def pad_inplace(self: list[T], shape: list[int]) -> list[T]:
+        assert len(shape) == 2, "List.pad: Only matrix padding suppored at the moment."
+        rows, cols = shape
+        rows_length = rows - len(self)
+
+        if rows_length < 0:
+            for _ in range(-rows_length): self.pop()
+            for row in self: row.pad_vec_inplace(cols)
+        elif rows_length > 0:
+            for row in self: row.pad_vec_inplace(cols)
+            for _ in range(rows_length): self.append(zeros_vec(cols, TP=T.T))
+        
+        return self
+    
+    def pad_vec(self: list[T], length: int) -> list[T]:
+        new_vec = list[T](length)
+        for _ in range(length): new_vec.append(T(0))
+        for i in range(min(len(self), length)): new_vec[i] = self[i]
+
+        return new_vec
+
+    def pad[TP](self: list[list[TP]], rows: int, cols: int) -> list[list[TP]]:
+        new_mat = zeros_mat(rows, cols, TP=TP)
+        m, n = self.shape
+
+        for i in range(min(m, rows)):
+            for j in range(min(n, cols)):
+                new_mat[i][j] = self[i][j]
+
+        return new_mat
+    
+    def pad_with_value[TP](self: list[list[TP]], val, size: int, axis: int) -> list[list[TP]]:
+        assert -1 < axis < 2, "List: pad_with_value axis does not match the dimension"
+        
+        m, n = self.shape
+        new_arr = self.copy()
+        
+        if axis == 0:
+            new_arr.extend([[val for _ in range(n)] for _ in range(size)])
+        
+        if axis == 1:
+            for row in new_arr:
+                row.extend([val for _ in range(size)])
+        
+        return new_arr
+    
+    def rand(self: list[T], base, distribution: str):
+        assert distribution == UNIFORM_DISTRIBUTION, "Not implemented yet: random distributions other than uniform"
+        
+        if isinstance(self, list[list[list]]):
+            compile_error("Sequre list does not support dimensions higher than 2.")
+
+        if isinstance(self, list[list]):
+            return __rand_mat(self.shape, base)
+        else:
+            return __rand_vec(len(self), base)
+    
+    def rand_bits(self: list[T], bitlen: int):
+        if isinstance(self, list[list[list]]):
+            compile_error("Sequre does not support dimensions higher than 2.")
+
+        if isinstance(self, list[list]):
+            return __rand_mat_bits(self.shape, bitlen)
+        else:
+            return __rand_vec_bits(len(self), bitlen)
+    
+    def get_identity(self: list[T]) -> list[T]:
+        identity = self.zeros()
+        for i in range(len(self)):
+            identity[i][i] = mpc_uint(1)
+        return identity
+    
+    def fixed_value(self: list[T], value) -> list[T]:
+        if isinstance(self, list[mpc_uint]) and isinstance(value, mpc_uint):
+            return [mpc_uint(value) for _ in range(len(self))]
+        if isinstance(self, list[list[mpc_uint]]) and isinstance(value, mpc_uint):
+            return [[mpc_uint(value) for _ in range(len(self[0]))] for _ in range(len(self))]
+        if isinstance(self, list[int]) and isinstance(value, int):
+            return [value for _ in range(len(self))]
+        if isinstance(self, list[list[int]]) and isinstance(value, int):
+            return [[value for _ in range(len(self[0]))] for _ in range(len(self))]
+        
+        compile_error('Invalid type within a fixed value method')
+    
+    def zeros(self: list[T]) -> list[T]:
+        return [self[i].zeros() for i in range(len(self))]
+    
+    def ones(self: list[T]) -> list[T]:
+        return [self[i].ones() for i in range(len(self))]
+
+    def zeros_float(self: list[T]):
+        if isinstance(self, list[list[list]]):
+            compile_error("Sequre does not support dimensions higher than 2.")
+        
+        if isinstance(self, list[list]):
+            return [[0.0 for _ in range(len(self[0]))] for _ in range(len(self))]
+        else:
+            return [0.0 for _ in range(len(self))]
+    
+    def copy(self: list[T]):
+        new_list = list[T](len(self))
+
+        for e in self:
+            new_list.append(e if isinstance(e, ByVal) else e.copy())
+        
+        return new_list
+    
+    def has_zero(self: list[T]) -> bool:
+        for e in self:
+            if e.has_zero(): return True
+        return False
+    
+    def to_float(self: list[T]):
+        return [e.to_float() for e in self]
+    
+    def to_int(self: list[T]):
+        return [e.to_int() for e in self]
+    
+    def to_fp(self: list[T], modulus):
+        return [e.to_fp(modulus) for e in self]
+    
+    def to_complex(self: list[T]):
+        return [e.to_complex() for e in self]
+    
+    def parallel_add(self: list[T], other) -> list[T]:
+        l = list[T](len(self))
+        for s, o in zip(self, other): l.append(s + o)
+        return l
+
+    def broadcast_add(self: list[T], other) -> list[T]:
+        l = list[list[mpc_uint]](len(self))
+        self_shape = self.shape
+        if self_shape[1] != len(other):
+            raise ValueError(f"Unsupported dimensions. Trying to add shapes {self_shape} and [{len(other)},]")
+
+        for s in self: l.append(s + other)
+        return l
+    
+    def sum(self: list[T]) -> T:
+        if isinstance(T, ByVal):
+            if not self:
+                return T(0)
+        
+        assert len(self), "Cannot sum an empty list"
+        init_val = self[0]
+        s = init_val if isinstance(init_val, ByVal) else init_val.copy()
+        for i in range(1, len(self)): s += self[i]
+        return s
+
+    def sum(self: list[T], mpc) -> T:
+        """ For summing secure containers """
+        return self._conditional_iop(T.iadd, mpc, PREPEND_ARGS=1)
+    
+    def floor_mean(self: list[T]) -> T:
+        return self.sum() // len(self)
+    
+    def mean(self: list[T]):
+        return self.sum() / len(self)
+    
+    def reduce_and(self: list[T]) -> T:
+        if not self: return T.zeros()
+        
+        start = self[0]
+        for i in range(1, len(self)): start &= self[i]
+        
+        return start
+    
+    def reduce_mul(self: list[T]) -> T:
+        if not self: return T.ones()
+        
+        prod = self[0].ones()
+        for e in self: prod *= e
+        
+        return prod
+    
+    def reduce_mul_powers(self: list[T], pows, modulus: mpc_uint) -> T:
+        result = self[0].ones()
+        for s, o in zip(self, pows):
+            result = result.mul_mod(s.pow_mod(mpc_uint(o), modulus), modulus)
+        return result
+    
+    def slice_reference(self: list[T], begin: int, end: int) -> list[T]:
+        len_: int = end - begin
+        return list[T](
+            arr=Array(
+                ptr=self.arr.ptr + begin,
+                sz=len_),
+            len=len_)
+
+    def nbytes(self: List[T]) -> int:
+        sum_of_sizes = 0
+        for e in self: sum_of_sizes += e.nbytes()
+        return sum_of_sizes
+    
+    def _pickle_size(self: List[T]) -> int:
+        sum_of_sizes = sizeof(int)
+        for e in self: sum_of_sizes += e._pickle_size()
+        return sum_of_sizes
+    
+    def scatter(self):
+        return [e.scatter() for e in self]
+    
+    def scatter_inplace(self: List[T]):
+        if isinstance(T, List):
+            return [e.scatter_inplace() for e in self]
+        elif isinstance(T, Vec):
+            new_list = List[u64](len(self) * SIMD_LANE_SIZE)
+            for v in self: new_list.extend(v.scatter())
+            return new_list
+        else: compile_error("Invalid list to scatter. Possibly not vectorized?")
+    
+    def scatter_bitcast(self: List[u64xN]) -> List[u64]:
+        n = len(self) * SIMD_LANE_SIZE
+        _arr = Array(ptr=bitcast_scatter(self.arr.ptr, N=SIMD_LANE_SIZE), sz=n)
+        return List(arr=_arr, len=n)
+    
+    def scatter_bitcast(self: List[List[u64xN]]) -> List[List[u64]]:
+        return [row.scatter_bitcast() for row in self]
+
+    def shuffle(self: List[u64], vec: Vec[u64, SIMD_LANE_SIZE]) -> Vec[u64, SIMD_LANE_SIZE]:
+        return Vec[u64, SIMD_LANE_SIZE](self[[vec[i] for i in staticrange(SIMD_LANE_SIZE)]])
+    
+    def vectorize(self: List[T], lane_size: Static[int]):
+        if isinstance(T, List):
+            return [e.vectorize(lane_size) for e in self]
+        elif isinstance(T, u64) or isinstance(T, float):
+            return [Vec[T, lane_size](self.arr.ptr + i) for i in range(0, len(self), lane_size)]
+        else:
+            compile_error("Invalid vectorization argument.")
+    
+    def vectorize_bitcast(self: List[u64]) -> List[u64xN]:
+        _mm_n = len(self) // SIMD_LANE_SIZE
+        _arr = Array(ptr=bitcast_vectorize(self.arr.ptr, N=SIMD_LANE_SIZE), sz=_mm_n)
+        return List(arr=_arr, len=_mm_n)
+    
+    def vectorize_bitcast(self: List[List[u64]]) -> List[List[u64xN]]:
+        return [row.vectorize_bitcast() for row in self]
+    
+    def cyclic_diag(self, idx: int) -> T:
+        assert self.ndim == 2, "List: Cannot fetch cyclic diagonal of tensor other than matrix"
+        m, n = self.shape
+        return [self[(i + idx) % m][i % n] for i in range(max(m, n))]
+    
+    def diagonal_contig(self, antidiagonal: bool = False) -> List[T]:
+        return [col.rotate(-i if antidiagonal else i) for (i, col) in enumerate(self.transpose())].transpose()
+
+    def diagonal_transpose(self, skinny: bool):
+        assert self.shape[0] <= self.shape[1], "Invalid encoding for cyclic-diagonal matrix"
+        
+        diag_count = self.shape[0]
+        diagonals = [
+            self[i].rotate(-i + diag_count * int(not skinny))
+            for i in range(1, diag_count)]
+        diagonals.reverse()
+        diagonals.insert(0, self[0])
+
+        return diagonals
+
+    def patch_copy(self: List[T], new_size: int) -> List[T]:
+        if isinstance(T, list):
+            return [row.patch_copy(new_size) for row in self]
+        
+        assert isinstance(T, ByVal), "Cannot patch-copy an n-dim list"
+        return [self[i % len(self)] for i in range(new_size)]
+    
+    def hstack(self, other: List[T]) -> List[T]:
+        assert self.ndim == other.ndim == 2, "List: hstack possible only on 2-dimensional arrays at the moment"
+
+        m, n = self.shape
+        p, q = other.shape
+        assert m == p, "List: shapes missmatch for hstack"
+
+        new_arr = self.copy()
+        for self_row, other_row in zip(new_arr, other):
+            self_row.extend(other_row)
+
+        return new_arr
+    
+    def vstack(self, other: List[T]) -> List[T]:
+        assert self.ndim == other.ndim == 2, "List: vstack possible only on 2-dimensional arrays at the moment"
+
+        m, n = self.shape
+        p, q = other.shape
+        assert n == q, "List: shapes missmatch for vstack"
+
+        new_arr = self.copy()
+        new_arr.extend(other)
+
+        return new_arr
+    
+    def tolist(self) -> List[T]:
+        return self
+    
+    def abs(self) -> List[T]:
+        new_arr = List[T](len(self))
+        
+        for i in range(len(self)):
+            new_arr.append(abs(self[i]))
+        
+        return new_arr
+    
+    def sqrt(self) -> List[float]:
+        new_arr = List[T](len(self))
+        
+        for i in range(len(self)):
+            new_arr.append(self[i].sqrt())
+        
+        return new_arr
+    
+    def _conditional_iop[PREPEND_ARGS: Static[int] = 0](self, iop, *args):
+        if len(self) == 0:
+            return T()
+        
+        start_idx = 0
+        while start_idx < len(self):
+            check = not self[start_idx].is_empty() if isinstance(T, ndarray) else bool(self[start_idx])
+            if check: break
+            start_idx += 1
+        
+        init_val = self[start_idx]
+        result = init_val if isinstance(init_val, ByVal) else init_val.copy()
+        for i in range(start_idx + 1, len(self)):
+            next_item = self[i]
+            check = (not next_item.is_empty()) if isinstance(T, ndarray) else bool(next_item)
+            if check:
+                if PREPEND_ARGS == 1:
+                    iop(result, *args, next_item)
+                else:
+                    iop(result, next_item, *args)
+
+        return result
+    
+
+@extend
+class ndarray:
+    def __pickle__(self, jar: Jar, pasteurized: bool):
+        pickle(self.nbytes, jar, pasteurized)
+        if not pasteurized: jar += self.nbytes._pickle_size()
+        _write_raw(jar, self._data.as_byte(), self.nbytes, pasteurized)
+        if not pasteurized:
+            jar += self.nbytes
+            pickle_tuple_unpasteurized(self.shape, jar)
+        else: native_pickle(self.shape, jar)
+    
+    def __unpickle__(jar: Jar, pasteurized: bool) -> ndarray[S, T]:
+        _nbytes = unpickle(jar, pasteurized, int)
+        if not pasteurized: jar += _nbytes._pickle_size()
+        _data_bytes = Ptr[byte](_nbytes)
+        _read_raw(jar, _data_bytes, _nbytes, pasteurized)
+        _data = Ptr[T](_data_bytes)
+        if not pasteurized:
+            jar += _nbytes
+            _shape = unpickle_tuple_unpasteurized(jar, S=S)        
+        else: _shape = native_unpickle(jar, S)
+
+        return ndarray[S, T]._new_contig(_shape, _data)
+
+    def _pickle_size(self) -> int:
+        return \
+            self.nbytes._pickle_size() + \
+            self.nbytes + \
+            tuple_pickle_size(S)
+    
+    def abbrv(self) -> str:
+        return self.tolist().abbrv()
+    
+    @staticmethod
+    def rand_uniform[S1](shape: S1, *args) -> ndarray[S1, float]:
+        new_arr = zeros(shape)
+        for i in range(new_arr.size):
+            new_arr._data[i] = prg.random()
+        return new_arr
+    
+    @staticmethod
+    def rand_normal[S1](shape: S1, mu: float = 0.0, sigma: float = 1.0, *args) -> ndarray[S1, float]:
+        new_arr = zeros(shape)
+        for i in range(new_arr.size):
+            new_arr._data[i] = prg.gauss(mu=mu, sigma=sigma)
+        return new_arr
+    
+    @staticmethod
+    def rand[S1](shape: S1, distribution: str, *args) -> ndarray[S1, float]:
+        if distribution == UNIFORM_DISTRIBUTION:
+            return ndarray[S1, float].rand_uniform(shape)
+        
+        if distribution == NORMAL_DISTRIBUTION:
+            return ndarray[S1, float].rand_normal(shape)
+        
+        if distribution == ZEROS_DISTRIBUTION:
+            return ndarray[S1, float].zeros(shape)
+        
+        if distribution == ONES_DISTRIBUTION:
+            return ndarray[S1, float].ones(shape)
+        
+        raise ValueError(f"Non-supported distribution: {distribution}")
+    
+    def savetxt(self, path: str):
+        with open(path, "w") as f:
+            f.write(str(self.tolist()))
+    
+    def nan_to_num(self, copy: bool = True, nan=0) -> ndarray[S, T]:
+        new_arr = self.copy() if copy else self
+
+        for i in range(self.size):
+            if math.isnan(new_arr._data[i]):
+                new_arr._data[i] = T(nan)
+        
+        return new_arr
+    
+    def erase_element(self, index: int) -> ndarray[S, T]:
+        assert self.ndim == 1, "not implemented yet: ndarray erase_element for arbitrary dimension"
+
+        new_arr = zeros((len(self) - 1,), dtype=T)
+
+        for i in range(index):
+            new_arr[i] = self[i]
+        
+        for i in range(index + 1, len(self)):
+            new_arr[i - 1] = self[i]
+        
+        return new_arr
+    
+    def is_empty(self) -> bool:
+        return ndarray._count(self.shape) == 0
+    
+    def local_broadcast[S2](self, target_shape: S2) -> ndarray[S2, T]:
+        if staticlen(S2) > staticlen(S):
+            assert self.ndim == 1 and len(target_shape) == 2, "Broadcasting enabled only for 1-dim to 2-dim ndarrays at the moment"
+        
+            if self.shape[0] == 1:
+                return zeros(target_shape, dtype=T) + self[0]
+            
+            if self.shape[0] == target_shape[1]:
+                return zeros(target_shape, dtype=T) + self
+            
+            if self.shape[0] == target_shape[0]:
+                return zeros(target_shape, dtype=T) + self.reshape((self.shape[0], 1))
+            
+            raise ValueError(f"ndarray: Cannot broadcast shape {self.shape} into {target_shape}")
+        elif staticlen(S) == 1 and self.shape[0] == 1:
+            assert target_shape[0] >= self.shape[0], "ndarray: cannot broadcast to a smaller size"
+            return zeros(target_shape, dtype=T) + self[0]
+        elif staticlen(S2) == staticlen(S):
+            return self
+        else:
+            compile_error("ndarray: incomatible shapes for broadcast")
+
+    def expand_dims(self, axis: int = 0):
+        if staticlen(S) == 1:
+            new_shape = (1, self.shape[0]) if axis == 0 else (self.shape[0], 1)
+            return ndarray[Tuple[int, int], T]._new_contig(new_shape, self._data)
+        elif staticlen(S) == 2:
+            new_shape = (1, *self.shape) if axis == 0 else (*self.shape, 1)
+            return ndarray[Tuple[int, int, int], T]._new_contig(new_shape, self._data)
+        else:
+            compile_error("Invalid ndarray shape (not supported yet for expand_dims)")
+    
+    def extend(self, other: ndarray[S, T], axis: int = 0) -> ndarray[S, T]:
+        assert axis == 0, "ndarray: Only axis=0 supported for extension at the moment"
+        assert self.shape[1:] == other.shape[1:], f"ndarray: Shapes mismatch while extending over 0 axis: {self.shape} vs {other.shape}"
+        
+        new_data = ptr[byte](self.nbytes + other.nbytes)
+        str.memcpy(new_data, self._data.as_byte(), self.nbytes)
+        str.memcpy(new_data + self.nbytes, other._data.as_byte(), other.nbytes)
+
+        first_lane = self.shape[0] + other.shape[0]
+        self._shape = (first_lane, *self.shape[1:])
+        self._data = ptr[T](new_data)
+
+        return self
+
+    def resize(self, shape: S) -> ndarray[S, T]:
+        if self.shape == shape:
+            return self
+        
+        new_array = zeros(shape, dtype=T)
+        
+        if staticlen(S) == 1:
+            for i in range(min(self.shape[-1], shape[-1])):
+                new_array._data[i] = self._data[i]
+        elif staticlen(S) == 2:
+            new_rows, new_cols = shape
+            old_rows, old_cols = self.shape
+
+            for i in range(min(old_rows, new_rows)):
+                for j in range(min(old_cols, new_cols)):
+                    new_array[i][j] = self[i][j]
+        else:
+            compile_error("ndarray: can resize only 1-dim and 2-dim ndarrays at the moment")
+        
+        return new_array
+    
+    def pad(self, padding: int, axis: Static[int]) -> ndarray[S, T]:
+        if staticlen(S) <= axis:
+            compile_error("ndarray: axis does not exist (too large)")
+
+        if padding == 0:
+            return self.copy()
+        
+        _chunk_size = self.size if axis == 0 else self.strides[axis - 1] // self.itemsize
+        new_shape = (*self.shape[:axis], self.shape[axis] + padding, *self.shape[axis + 1:])
+
+        new_arr = zeros(new_shape, dtype=T)
+        idx = 0
+
+        for e in self.flatten():
+            if idx == 0 or idx % _chunk_size:
+                new_arr._data[idx] = e
+                idx += 1
+            else:
+                idx += self.strides[axis] * padding
+        
+        return new_arr
+    
+    def pad_left(self, padding: int) -> ndarray[S, T]:
+        return zeros((padding, *self.shape[1:]), dtype=T).extend(self)
+    
+    def pad_right(self, padding: int) -> ndarray[S, T]:
+        return self.copy().extend(zeros((padding, *self.shape[1:]), dtype=T))
+
+    def pad_with_value(self, val, size: int, axis: int, *args) -> ndarray[S, T]:
+        assert -1 < axis < 2, "ndarray: pad_with_value axis missmatch"
+
+        if axis == 0:
+            return self.vstack(ndarray[S, T].ones((size, len(self[0]))))
+        
+        # axis == 1
+        return self.hstack(ndarray[S, T].ones((len(self), size)))
+
+    def abs(self) -> ndarray[S, T]:
+        new_array = self.zeros()
+        
+        for i in range(self.size):
+            new_array._data[i] = abs(self._data[i])
+        
+        return new_array
+    
+    def copy(self) -> ndarray[S, T]:
+        new_array = self.zeros()
+        
+        for i in range(self.size):
+            new_array._data[i] = self._data[i]
+        
+        return new_array
+    
+    def patch_copy(self, new_size: int) -> ndarray[S, T]:
+        return array(self.tolist().patch_copy(new_size))
+    
+    # Temp method to match ciphertensor signature. Will be removed after Ciphertensor is switched to use static shape.
+    def patch_copy(self, mpc, new_size: int) -> ndarray[S, T]:
+        return self.patch_copy(new_size)
+    
+    def to_list(self) -> List:
+        assert staticlen(self.shape) <= 2, "Bitcast to_list is supported only for ndarrays of dimension less than 3 at the moment."
+        if staticlen(self.shape) == 0:
+            return List[T]()
+        elif staticlen(self.shape) == 1:
+            return List(arr=Array(ptr=self._data, sz=self.shape[0]), len=self.shape[0])
+        else:
+            return [List(arr=Array(ptr=self._data + i * self.shape[1], sz=self.shape[1]), len=self.shape[1]) for i in range(self.shape[0])]
+    
+    def count(self, elem: T) -> int:
+        counter = 0
+        
+        for i in range(self.size):
+            if elem == self._data[i]:
+                counter += 1
+        
+        return counter
+    
+    def cyclic_diag(self, idx: int) -> ndarray[Tuple[int], T]:
+        assert self.ndim == 2, "ndarray: Cannot fetch cyclic diagonal of tensor other than matrix"
+        m, n = self.shape
+        size = max(m, n)
+        diagonal = Ptr[T](alloc(size * sizeof(T)))
+
+        for i in range(size):
+            diagonal[i] = self[(i + idx) % m][i % n]
+        
+        return ndarray[Tuple[int], T]._new_contig((size,), diagonal)
+    
+    def diagonal_contig(self, antidiagonal: bool = False) -> ndarray[S, T]:
+        return array(self.tolist().diagonal_contig(antidiagonal))
+
+    def diagonal_transpose(self, skinny: bool):
+        return array(self.tolist().diagonal_transpose(skinny))
+
+    def shift_like_cipher(self, step: int, slots: int, cols: int) -> ndarray[S, T]:
+        return array(self.tolist().shift_like_cipher(step, slots, cols))
+    
+    @staticmethod
+    def diag(shape: S, value: T) -> ndarray[S, T]:
+        if not staticlen(S) == 2:
+            compile_error("ndarray: can compute diag only for 2-dim ndarray")
+        
+        diag_arr = zeros(shape, dtype=T)
+        for i in range(min(shape)):
+            diag_arr[i][i] = value
+        return diag_arr
+
+    def diag(self, value: T) -> ndarray[S, T]:
+        return ndarray[S, T].diag(self.shape, value)
+    
+    def dot_axis(self, other: ndarray[S, T], axis: int, preserve_dim: Static[int] = 1):
+        assert self.shape == other.shape, "ndarray: shapes missmatch for dot-axis product"
+        assert axis < self.ndim, "ndarray: axis does not exist"
+
+        _dot = (self * other).sum(axis=axis)
+
+        if preserve_dim == 0:
+            return _dot
+        
+        if self.is_empty():
+            return self
+
+        if staticlen(S) == 1: return array([_dot])
+        return _dot.expand_dims(axis=axis)
+    
+    def dot_axis(self, axis: int, preserve_dim: Static[int] = 1):
+        return self.dot_axis(self, axis, preserve_dim)
+    
+    def sum_axis(self, axis: int) -> ndarray[Tuple[int], T]:
+        if staticlen(S) != 2 and staticlen(S) != 1:
+            compile_error("ndarray: only 1-dim and 2-dim ndarrays can be summed")
+        
+        result = self.sum(axis)
+        if staticlen(S) == 2:
+            return self.sum(axis)
+        
+        return array([result])
+    
+    def dot(self, other: ndarray, axis: int):
+        return self.dot_axis(other, axis, preserve_dim=0)
+    
+    def dot(self, axis: int):
+        return self.dot_axis(axis, preserve_dim=0)
+    
+    def sqrt(self) -> ndarray[S, float]:
+        return self._propagate_call(math.sqrt)
+    
+    def sigmoid(self) -> ndarray[S, float]:
+        return self._propagate_call(lambda x: 1 / (1 + math.exp(-x)))
+    
+    def log(self) -> ndarray[S, float]:
+        return self._propagate_call(math.log)
+    
+    def round(self, decimals=0) -> ndarray[S, float]:
+        return self._propagate_call(partial(round, n=decimals))
+
+    def _propagate_call(self, _call):
+        # TODO: Write an IR pass that will call this automatically to enable bar.foo(ndarray) for any byVal-arg foo in bar
+        new_arr = self.zeros()
+        for i in range(self.size):
+            new_arr._data[i] = _call(self._data[i])
+        return new_arr
+    
+    def getitemdup(self, i: int, new_size: int) -> ndarray[S, T]:
+        assert self.ndim == 1, "ndarray: getitemdup expects ndarray to be 1-dimensional"
+        return zeros((new_size,), dtype=type(self._data[0])) + self[i]
+    
+    def hstack(self, other: ndarray[S, T]) -> ndarray[S, T]:
+        assert self.ndim == other.ndim == 2, "ndarray: hstack possible only on 2-dimensional arrays at the moment"
+
+        m, n = self.shape
+        p, q = other.shape
+        assert m == p, "ndarray: shapes missmatch for hstack"
+
+        new_arr = zeros((m, n + q), dtype=T)
+        new_arr[:, :n] = self
+        new_arr[:, n:n+q] = other
+
+        return new_arr
+    
+    def vstack(self, other: ndarray[S, T]) -> ndarray[S, T]:
+        assert self.ndim == other.ndim == 2, "ndarray: vstack possible only on 2-dimensional arrays at the moment"
+
+        m, n = self.shape
+        p, q = other.shape
+        assert n == q, "ndarray: shapes missmatch for vstack"
+
+        new_arr = self.copy()
+        new_arr.extend(other)
+
+        return new_arr
+
+    def rand(self, distribution: str, *args) -> ndarray[S, T]:
+        return ndarray[S, T].rand(self.shape, distribution)
+    
+    def sign(self, *args) -> ndarray[S, T]:
+        new_arr = self.zeros()
+        
+        for i in range(self.size()):
+            new_arr._data[i] = T(-1) if self._data[i] < 0 else T(1) if self._data[0] > 0 else T(0)
+
+        return new_arr
+
+    # Mock methods (to match the interface of secure containers: Sharetensor and MPP)
+    def cov_max(self, mpc, *args):
+        x, y = self, self.T
+        mask = ((x - y) > 0).astype(float)
+        return x * mask - y * (mask - 1)
+    
+    @staticmethod
+    def enc[S, T](mpc, data: ndarray[S, T]) -> ndarray[S, T]:
+        return data
+    
+    def encrypt(self):
+        return self
+    
+    def via_mpc(self, foo, *args):
+        return foo(self, *args)
+    
+    def check_valid(self):
+        pass
+    
+    @property
+    def actual_shape(self):
+        return self.shape
+    
+    def to_int_t(self, modulus) -> list:
+        return self.tolist().to_int_t(modulus)
+    
+    def reveal(self, *args):
+        return self
+    
+    @property
+    def I(self):
+        return self.diag(T(1))
+    
+    @property
+    def cohort_shape(self) -> S:
+        return self.shape
+    
+    @property
+    def partition_shape(self) -> S:
+        return self.shape
+    
+    @property
+    def modulus(self) -> T:
+        return T(0)
+    
+    @staticmethod
+    def zeros(shape: S, *args) -> ndarray[S, T]:
+        return zeros(shape, dtype=T)
+    
+    def zeros[S1](self, shape: S1) -> ndarray[S1, T]:
+        return zeros(shape, dtype=T)
+    
+    def zeros(self: ndarray[S, T]) -> ndarray[S, T]:
+        return zeros(self.shape, dtype=T)
+    
+    @staticmethod
+    def ones(shape: S, *args) -> ndarray[S, T]:
+        return ones(shape, dtype=T)
+    
+    def ones(self: ndarray[S, T], *args) -> ndarray[S, T]:
+        return ones(self.shape, dtype=T)
+    
+    def to_fp(self) -> ndarray[S, float]:
+        return self.astype(float)
+    
+    def to_fp(self, modulus) -> list:
+        return self.tolist().to_fp(modulus)
+    
+    def filter(self, mask):
+        return array([e.tolist() for e, m in zip(self, mask) if bool(m)])
+    
+    def maximum(self, axis: int, keepdims: Static[int] = False):
+        return self.max(axis, keepdims=keepdims)
+
+    # Internal
+    def _slice_cols(self, start_col: int, end_col: int):
+        if staticlen(S) == 2: return self[:, start_col:end_col]
+        elif staticlen(S) == 1: return self[start_col:end_col]
+        else: compile_error("ndarray: _slice_cols works only for 1-dim and 2-dim arrays")
+    
+    # Internal typechecker hack
+    @property
+    def _internal_type(self) -> T:
+        return T()
+    
+    # Matmul cost calculation
+    def get_matmul_cost(self, other: ndarray) -> float:
+        return self.shape[0] * self.shape[1] * other.shape[1] * SMALL_CYCLES_INSTR_COST_ESTIMATE
+    
+    # Temp bugfixes. The original methods are buggy.
+    def __str__(self) -> str:
+        return self.tolist().__repr__()
+    
+    def __repr__(self) -> str:
+        return self.tolist().__repr__()
+    
+    def transpose(self) -> ndarray[S, T]:
+        return array(self.tolist().transpose(), dtype=T)
+    
+    def __getitem__(self, s: Tuple[slice, slice]) -> ndarray[S, T]:
+        if not staticlen(S) == 2:
+            compile_error("ndarray: can only do sliced 2-dim getitem on 2-dim arrays")
+        
+        rs, cs = s
+        r_start, r_stop, _, _ = rs.adjust_indices(self.shape[0])
+        c_start, c_stop, _, _ = cs.adjust_indices(self.shape[1])
+        
+        new_array = zeros((r_stop - r_start, c_stop - c_start), dtype=T)
+        
+        r_idx = 0
+        for i in range(r_start, r_stop):
+            c_idx = 0
+            for j in range(c_start, c_stop):
+                new_array[r_idx][c_idx] = self[i][j]
+                c_idx += 1
+            r_idx += 1
+        
+        return new_array
+    
+    def __setitem__(self, s: Tuple[slice, slice], other: ndarray[S, T]):
+        if not staticlen(S) == 2:
+            compile_error("ndarray: can only do sliced 2-dim setitem on 2-dim arrays")
+        
+        rs, cs = s
+        start, stop, _, _ = rs.adjust_indices(self.shape[0])
+        o_idx = 0
+        for i in range(start, stop):
+            self[i][cs] = other[o_idx][:]
+            o_idx += 1
+
+    def __mul__[dtype](self: ndarray[S, dtype], other: ndarray[S, bool]) -> ndarray[S, dtype]:
+        return self * other.astype(dtype)
+    
+    def __matmul__(self, other: ndarray) -> ndarray[S, T]:
+        assert self.shape[1] == other.shape[0] and self.ndim == other.ndim == 2, f"ndarray matmul: Invalid shapes: {self.shape} vs {other.shape}"
+            
+        m, n = self.shape[0], other.shape[1]
+        _data = ptr[T](m * n)
+        _other_t = other.T
+
+        for i in range(m):
+            self_row = self[i]
+            start = i * n
+            for j in range(n):
+                _data[start + j] = (self_row * _other_t[j]).sum(axis=0)
+        
+        return ndarray[S, T]._new_contig((m, n), _data)
+
+    # Temporary helpers
+    def slice_local(self, i: int, cp_1_size: int) -> ndarray[S, T]:
+        new_arr = zeros_like(self)
+        new_arr[:-1, :cp_1_size-1] = self[1:, 1:cp_1_size]
+        new_arr[:-1, cp_1_size:] = self[1:, cp_1_size:]
+        return new_arr
+    
+    def rotate_local(self, i: int, cp_1_size: int) -> ndarray[S, T]:
+        assert self.ndim == 2 and self.shape[0] == 1, "Not implemented case"
+        assert i <= 0, "Not implemented case"
+        
+        i_pos = -i
+        assert i_pos <= cp_1_size, f"Not implemented case: i_pos {i_pos} > cp_1_size {cp_1_size}"
+        
+        if i_pos == 0:
+            return self.copy()
+        
+        new_arr = zeros_like(self[0])
+
+        if i_pos != cp_1_size:
+            new_arr[:i_pos] = self[0][cp_1_size - i_pos:cp_1_size]
+            new_arr[i_pos:cp_1_size] = self[0][:cp_1_size - i_pos]
+            
+        new_arr[cp_1_size:] = self[0][cp_1_size:]
+        return new_arr.expand_dims()
+
+
+print(f"Compiled setup:\n\t MPC Galois field size: {MPC_FIELD_SIZE.__repr__()}\n\t MPC Z_(2^k) ring size: {MPC_RING_SIZE.__repr__()}\n")
