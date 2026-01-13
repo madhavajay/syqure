@@ -159,8 +159,12 @@ jobs:
             if [ -z "$name" ]; then
               return 0
             fi
-            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
-              --jq ".artifacts[] | select(.name==\"${name}\") | .workflow_run.id" | head -n 1
+            local out
+            set +o pipefail
+            out="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq ".artifacts[] | select(.name==\"${name}\") | .workflow_run.id" | head -n 1)"
+            set -o pipefail
+            echo "$out"
           }
 
           if [ -z "$CODON_ARTIFACT" ]; then
