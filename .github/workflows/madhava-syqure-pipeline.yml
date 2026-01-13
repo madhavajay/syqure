@@ -448,20 +448,34 @@ jobs:
         run: |
           set -euo pipefail
           TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
-          BUNDLE_REL="ci/_artifacts/syqure/extract/syqure/bundles/${TRIPLE}.tar.zst"
-          if [ ! -f "$BUNDLE_REL" ]; then
-            echo "Missing bundle at $(pwd)/$BUNDLE_REL" >&2
+          BUNDLE_PATH="$(pwd)/ci/_artifacts/syqure/extract/syqure/bundles/${TRIPLE}.tar.zst"
+          CODON_INCLUDE="$(pwd)/ci/_artifacts/sequre/extract/codon/include"
+          CODON_LIBS="$(pwd)/ci/_artifacts/sequre/extract/codon/lib/codon"
+          if [ ! -f "$BUNDLE_PATH" ]; then
+            echo "Missing bundle at $BUNDLE_PATH" >&2
+            exit 1
+          fi
+          if [ ! -d "$CODON_INCLUDE" ]; then
+            echo "Missing Codon headers at $CODON_INCLUDE" >&2
+            exit 1
+          fi
+          if [ ! -d "$CODON_LIBS" ]; then
+            echo "Missing Codon libs at $CODON_LIBS" >&2
             exit 1
           fi
           rm -rf python/syqure/lib
           mkdir -p "$PYTHON_ARTIFACT_DIR/dist"
-          echo "SYQURE_BUNDLE_FILE=/io/${BUNDLE_REL}" >> "$GITHUB_ENV"
+          echo "SYQURE_BUNDLE_FILE=$BUNDLE_PATH" >> "$GITHUB_ENV"
+          echo "SYQURE_CPP_INCLUDE=$CODON_INCLUDE" >> "$GITHUB_ENV"
+          echo "SYQURE_CPP_LIB_DIRS=$CODON_LIBS" >> "$GITHUB_ENV"
 
       - name: Build Python wheel (manylinux, if needed)
         if: steps.resolve.outputs.python_needs_build == 'true'
         uses: PyO3/maturin-action@v1
         env:
           SYQURE_BUNDLE_FILE: ${{ env.SYQURE_BUNDLE_FILE }}
+          SYQURE_CPP_INCLUDE: ${{ env.SYQURE_CPP_INCLUDE }}
+          SYQURE_CPP_LIB_DIRS: ${{ env.SYQURE_CPP_LIB_DIRS }}
         with:
           manylinux: "2_28"
           python-version: "3.10"
