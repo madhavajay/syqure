@@ -529,7 +529,7 @@ jobs:
           plat["syqure"]={"sha":"${{ steps.resolve.outputs.syqure_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-${{ env.PLATFORM }}-${{ steps.resolve.outputs.syqure_sha }}"}; \
           plat["python"]={"sha":"${{ steps.resolve.outputs.python_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-python-${{ env.PLATFORM }}-${{ steps.resolve.outputs.python_sha }}"}; \
           plat["docker"]={"sha":"${{ steps.resolve.outputs.docker_sha }}","run_id":"${{ github.run_id }}","artifact":"syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}"}; \
-          path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\\n")'
+          path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")'
 
       - name: Commit provenance
         if: |
