@@ -480,7 +480,25 @@ jobs:
           manylinux: "2_28"
           python-version: "3.10"
           args: --release --manifest-path python/Cargo.toml --out ${{ env.PYTHON_ARTIFACT_DIR }}/dist
-          before-build: yum install -y zstd
+          before-build: |
+            set -euo pipefail
+            ROOT="$(pwd)"
+            export SYQURE_BUNDLE_FILE="${SYQURE_BUNDLE_FILE:-$ROOT/ci/_artifacts/syqure/extract/syqure/bundles/x86_64-unknown-linux-gnu.tar.zst}"
+            export SYQURE_CPP_INCLUDE="${SYQURE_CPP_INCLUDE:-$ROOT/ci/_artifacts/sequre/extract/codon/include}"
+            export SYQURE_CPP_LIB_DIRS="${SYQURE_CPP_LIB_DIRS:-$ROOT/ci/_artifacts/sequre/extract/codon/lib/codon}"
+            if [ ! -f "$SYQURE_BUNDLE_FILE" ]; then
+              echo "Missing bundle at $SYQURE_BUNDLE_FILE" >&2
+              exit 1
+            fi
+            if [ ! -d "$SYQURE_CPP_INCLUDE" ]; then
+              echo "Missing Codon headers at $SYQURE_CPP_INCLUDE" >&2
+              exit 1
+            fi
+            if [ ! -d "$SYQURE_CPP_LIB_DIRS" ]; then
+              echo "Missing Codon libs at $SYQURE_CPP_LIB_DIRS" >&2
+              exit 1
+            fi
+            yum install -y zstd
 
       - name: Upload Python wheel artifact
         if: steps.resolve.outputs.python_needs_build == 'true'
