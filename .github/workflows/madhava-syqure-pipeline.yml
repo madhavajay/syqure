@@ -450,7 +450,12 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install "maturin>=1.6,<2.0"
           TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
-          export SYQURE_BUNDLE_FILE="$SYQURE_ARTIFACT_DIR/extract/syqure/bundles/${TRIPLE}.tar.zst"
+          BUNDLE_PATH="$(pwd)/$SYQURE_ARTIFACT_DIR/extract/syqure/bundles/${TRIPLE}.tar.zst"
+          if [ ! -f "$BUNDLE_PATH" ]; then
+            echo "Missing bundle at $BUNDLE_PATH" >&2
+            exit 1
+          fi
+          export SYQURE_BUNDLE_FILE="$BUNDLE_PATH"
           rm -rf python/syqure/lib
           mkdir -p "$PYTHON_ARTIFACT_DIR/dist"
           maturin build --release --compatibility manylinux_2_28 \
