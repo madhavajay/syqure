@@ -228,7 +228,7 @@ jobs:
       !inputs.bump_only &&
       needs.check-version.result == 'success' &&
       (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped') &&
-      ((matrix.os == 'macos-latest' && inputs.build_macos) || (matrix.os == 'ubuntu-latest' && inputs.build_linux))
+      (inputs.build_macos || inputs.build_linux)
     strategy:
       matrix:
         include:
@@ -250,7 +250,13 @@ jobs:
         run: |
           sudo apt-get update
           if [ "${{ inputs.use_precompiled_bins }}" = "true" ]; then
-            sudo apt-get install -y zstd llvm-dev
+            sudo apt-get install -y zstd wget lsb-release software-properties-common gnupg
+            # Install LLVM 17 (matches Codon build)
+            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+            echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-17 main" | \
+              sudo tee /etc/apt/sources.list.d/llvm-17.list
+            sudo apt-get update
+            sudo apt-get install -y llvm-17-dev
           else
             sudo apt-get install -y zstd
           fi
@@ -284,7 +290,7 @@ jobs:
           fi
           BUNDLE_DIR="$(mktemp -d)"
           BUNDLE_TAR="$BUNDLE_DIR/codon-macos-arm64.tar.zst"
-          tar -C "$BUNDLE_ROOT" -c . | zstd -19 -o "$BUNDLE_TAR"
+          tar -C "$BUNDLE_ROOT" -ch . | zstd -19 -o "$BUNDLE_TAR"
           echo "SYQURE_BUNDLE_FILE=$BUNDLE_TAR" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
@@ -329,11 +335,11 @@ jobs:
           fi
           BUNDLE_DIR="$(mktemp -d)"
           BUNDLE_TAR="$BUNDLE_DIR/codon-linux-x86.tar.zst"
-          tar -C "$BUNDLE_ROOT" -c . | zstd -19 -o "$BUNDLE_TAR"
+          tar -C "$BUNDLE_ROOT" -ch . | zstd -19 -o "$BUNDLE_TAR"
           echo "SYQURE_BUNDLE_FILE=$BUNDLE_TAR" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
-          echo "SYQURE_LLVM_INCLUDE=$(llvm-config --includedir)" >> "$GITHUB_ENV"
+          echo "SYQURE_LLVM_INCLUDE=$(llvm-config-17 --includedir)" >> "$GITHUB_ENV"
 
       - name: Install protoc
         uses: arduino/setup-protoc@v2
