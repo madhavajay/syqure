@@ -275,9 +275,17 @@ echo "=== Copying Codon install to ${BIN_DIR}/codon ==="
 rm -rf "${BIN_DIR}/codon"
 mkdir -p "$BIN_DIR"
 cp -a "$INSTALL_DIR" "${BIN_DIR}/codon"
+STD_SRC="$CODON_DIR/stdlib"
+STD_DST="${BIN_DIR}/codon/lib/codon/stdlib"
+if [ -d "$STD_SRC" ]; then
+    rm -rf "$STD_DST"
+    ln -s "$STD_SRC" "$STD_DST"
+else
+    echo "Warning: Codon stdlib source not found at $STD_SRC; keeping copied stdlib." >&2
+fi
 
 # Step 3: Build Jupyter plugin
-JUPYTER_LIB_PATH="$INSTALL_DIR/libcodon_jupyter.dylib"
+JUPYTER_LIB_PATH="$INSTALL_DIR/lib/codon/libcodon_jupyter.dylib"
 if [ "$SKIP_JUPYTER_BUILD" = "1" ]; then
     echo "=== Skipping Jupyter Plugin build (SKIP_JUPYTER_BUILD=1) ==="
 elif [ "$FORCE_JUPYTER_BUILD" != "1" ] && [ -f "$JUPYTER_LIB_PATH" ] && [ -f "$CODON_DIR/jupyter/build/libcodon_jupyter.dylib" ]; then
@@ -379,6 +387,15 @@ cmake -S jupyter -B jupyter/build -G "$GENERATOR" \
     ${LIBUUID_INCLUDE_DIR:+-DLIBUUID_INCLUDE_DIR="$LIBUUID_INCLUDE_DIR"}
 cmake --build jupyter/build --config "${BUILD_TYPE}" -j"$CORES"
 cmake --install jupyter/build --prefix="$INSTALL_DIR"
+fi
+JUPYTER_LIB_REAL=""
+if [ -f "$INSTALL_DIR/lib/codon/libcodon_jupyter.dylib" ]; then
+    JUPYTER_LIB_REAL="$INSTALL_DIR/lib/codon/libcodon_jupyter.dylib"
+elif [ -f "$INSTALL_DIR/libcodon_jupyter.dylib" ]; then
+    JUPYTER_LIB_REAL="$INSTALL_DIR/libcodon_jupyter.dylib"
+fi
+if [ -n "$JUPYTER_LIB_REAL" ]; then
+    cp -f "$JUPYTER_LIB_REAL" "$BIN_DIR/codon/"
 fi
 
 # Step 4: Install Jupyter kernel (optional)
