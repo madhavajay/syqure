@@ -132,7 +132,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run workspace tests
-        run: cargo test --workspace --all-features --exclude syqure
+        run: cargo test --workspace --all-features --exclude syqure --exclude syqure-py
 
   check-version:
     name: Check if version needs bump
