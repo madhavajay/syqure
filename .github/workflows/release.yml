@@ -3,6 +3,21 @@ name: Syqure Release
 on:
   workflow_dispatch:
     inputs:
+      build_macos:
+        description: 'Build macOS binary'
+        required: false
+        type: boolean
+        default: true
+      build_linux:
+        description: 'Build Linux binary'
+        required: false
+        type: boolean
+        default: true
+      build_docker:
+        description: 'Build Linux Docker image'
+        required: false
+        type: boolean
+        default: true
       bump_type:
         description: 'Version bump type'
         required: false
@@ -40,6 +55,7 @@ env:
 jobs:
   bundle-macos-arm:
     name: Build Bundles (macOS arm64)
+    if: ${{ inputs.build_macos }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -206,7 +222,8 @@ jobs:
       always() &&
       !inputs.bump_only &&
       needs.check-version.result == 'success' &&
-      (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped')
+      (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped') &&
+      ((matrix.os == 'macos-latest' && inputs.build_macos) || (matrix.os == 'ubuntu-latest' && inputs.build_linux))
     strategy:
       matrix:
         include:
@@ -224,25 +241,25 @@ jobs:
           submodules: recursive
 
       - name: Install build deps (linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && inputs.build_linux
         run: |
           sudo apt-get update
           sudo apt-get install -y zstd
 
       - name: Download macOS arm64 bundle
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && inputs.build_macos
         uses: actions/download-artifact@v4
         with:
           name: syqure-bundle-aarch64-apple-darwin
           path: syqure/bundles
 
       - name: Set macOS bundle path
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && inputs.build_macos
         run: |
           echo "SYQURE_BUNDLE_FILE=${{ github.workspace }}/syqure/bundles/aarch64-apple-darwin.tar.zst" >> "$GITHUB_ENV"
 
       - name: Download Linux bundle (cached)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && inputs.build_linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -349,6 +366,8 @@ jobs:
     if: |
       always() &&
       !inputs.bump_only &&
+      inputs.build_docker &&
+      inputs.build_linux &&
       needs.build.result == 'success' &&
       (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped')
     steps:
@@ -488,6 +507,7 @@ jobs:
     if: |
       always() &&
       !inputs.bump_only &&
+      (inputs.build_macos || inputs.build_linux || inputs.build_docker) &&
       needs.build.result == 'success' &&
       (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped')
     steps:
