@@ -8,13 +8,38 @@ on:
         required: false
         type: boolean
         default: true
+      force_llvm:
+        description: 'Force rebuild LLVM (even if cached)'
+        required: false
+        type: boolean
+        default: false
+      force_codon:
+        description: 'Force rebuild Codon (even if cached)'
+        required: false
+        type: boolean
+        default: false
+      force_sequre:
+        description: 'Force rebuild Sequre (even if cached)'
+        required: false
+        type: boolean
+        default: false
+      force_syqure:
+        description: 'Force rebuild Syqure (even if cached)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: refresh-bins-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  LLVM_BRANCH: codon-17.0.6
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   refresh:
@@ -27,33 +52,99 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x86
+            bin_dir: bin/linux-x86
+            llvm_targets: all
           - os: macos-latest
             platform: macos-arm64
+            bin_dir: bin/macos-arm64
+            llvm_targets: AArch64
+    env:
+      PLATFORM: ${{ matrix.platform }}
+      BIN_DIR: ${{ matrix.bin_dir }}
+      LLVM_TARGETS: ${{ matrix.llvm_targets }}
+      CODON_LLVM_DIR: ci/_artifacts/codon-llvm
+      CODON_ARTIFACT_DIR: ci/_artifacts/codon
+      SEQURE_ARTIFACT_DIR: ci/_artifacts/sequre
+      SYQURE_ARTIFACT_DIR: ci/_artifacts/syqure
     steps:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Compute submodule hash
-        id: submodules
+      - name: Resolve SHAs and build plan
+        id: resolve
         shell: bash
         run: |
-          git submodule status > /tmp/submods.txt
-          echo "hash=$(sha256sum /tmp/submods.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          CODON_SHA="$(git -C codon rev-parse HEAD)"
+          SEQURE_SHA="$(git -C sequre rev-parse HEAD)"
+          SYQURE_SHA="$(git rev-parse HEAD)"
+          LLVM_SHA="$(git ls-remote https://github.com/exaloop/llvm-project refs/heads/${LLVM_BRANCH} | awk '{print $1}')"
 
-      - name: Restore build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            codon/llvm-project/build
-            codon/llvm-project/install
-            codon/build
-            codon/jupyter/build
-            sequre/build
-          key: bins-${{ runner.os }}-${{ runner.arch }}-${{ steps.submodules.outputs.hash }}
-          restore-keys: |
-            bins-${{ runner.os }}-${{ runner.arch }}-
+          echo "codon_sha=$CODON_SHA" >> "$GITHUB_OUTPUT"
+          echo "sequre_sha=$SEQURE_SHA" >> "$GITHUB_OUTPUT"
+          echo "syqure_sha=$SYQURE_SHA" >> "$GITHUB_OUTPUT"
+          echo "llvm_sha=$LLVM_SHA" >> "$GITHUB_OUTPUT"
+
+          LLVM_ARTIFACT="codon-llvm-${{ matrix.platform }}-${LLVM_SHA}"
+          CODON_ARTIFACT="codon-${{ matrix.platform }}-${CODON_SHA}"
+          SEQURE_ARTIFACT="sequre-${{ matrix.platform }}-${SEQURE_SHA}"
+          SYQURE_ARTIFACT="syqure-${{ matrix.platform }}-${SYQURE_SHA}"
+
+          echo "llvm_artifact=$LLVM_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "codon_artifact=$CODON_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "sequre_artifact=$SEQURE_ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "syqure_artifact=$SYQURE_ARTIFACT" >> "$GITHUB_OUTPUT"
+
+          lookup_run_id() {
+            local name="$1"
+            if [ -z "$name" ]; then return 0; fi
+            set +o pipefail
+            gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts" --paginate \
+              --jq ".artifacts[] | select(.name==\"${name}\") | .workflow_run.id" | head -n 1
+            set -o pipefail
+          }
+
+          LLVM_RUN_ID="$(lookup_run_id "$LLVM_ARTIFACT")"
+          CODON_RUN_ID="$(lookup_run_id "$CODON_ARTIFACT")"
+          SEQURE_RUN_ID="$(lookup_run_id "$SEQURE_ARTIFACT")"
+          SYQURE_RUN_ID="$(lookup_run_id "$SYQURE_ARTIFACT")"
+
+          echo "llvm_run_id=$LLVM_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "codon_run_id=$CODON_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "sequre_run_id=$SEQURE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "syqure_run_id=$SYQURE_RUN_ID" >> "$GITHUB_OUTPUT"
+
+          FORCE_LLVM="${{ inputs.force_llvm }}"
+          FORCE_CODON="${{ inputs.force_codon }}"
+          FORCE_SEQURE="${{ inputs.force_sequre }}"
+          FORCE_SYQURE="${{ inputs.force_syqure }}"
+
+          LLVM_NEEDS_BUILD="false"
+          CODON_NEEDS_BUILD="false"
+          SEQURE_NEEDS_BUILD="false"
+          SYQURE_NEEDS_BUILD="false"
+
+          if [ "$FORCE_LLVM" = "true" ] || [ -z "$LLVM_RUN_ID" ]; then
+            LLVM_NEEDS_BUILD="true"
+          fi
+          if [ "$FORCE_CODON" = "true" ] || [ -z "$CODON_RUN_ID" ] || [ "$LLVM_NEEDS_BUILD" = "true" ]; then
+            CODON_NEEDS_BUILD="true"
+          fi
+          if [ "$FORCE_SEQURE" = "true" ] || [ -z "$SEQURE_RUN_ID" ] || [ "$CODON_NEEDS_BUILD" = "true" ]; then
+            SEQURE_NEEDS_BUILD="true"
+          fi
+          if [ "$FORCE_SYQURE" = "true" ] || [ -z "$SYQURE_RUN_ID" ] || [ "$SEQURE_NEEDS_BUILD" = "true" ]; then
+            SYQURE_NEEDS_BUILD="true"
+          fi
+
+          echo "llvm_needs_build=$LLVM_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "codon_needs_build=$CODON_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "sequre_needs_build=$SEQURE_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+          echo "syqure_needs_build=$SYQURE_NEEDS_BUILD" >> "$GITHUB_OUTPUT"
+
+          echo "::notice::Build plan - LLVM: $LLVM_NEEDS_BUILD, Codon: $CODON_NEEDS_BUILD, Sequre: $SEQURE_NEEDS_BUILD, Syqure: $SYQURE_NEEDS_BUILD"
 
       - name: Install build deps (linux)
         if: matrix.os == 'ubuntu-latest'
@@ -75,23 +166,260 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build and bundle
+      # ========== LLVM ==========
+      - name: Restore LLVM cache
+        id: llvm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.CODON_LLVM_DIR }}
+          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
+          restore-keys: |
+            codon-llvm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Download LLVM artifact (if cached)
+        if: steps.resolve.outputs.llvm_needs_build != 'true' && steps.resolve.outputs.llvm_run_id != ''
+        continue-on-error: true
+        run: |
+          mkdir -p "$CODON_LLVM_DIR"
+          gh run download "${{ steps.resolve.outputs.llvm_run_id }}" \
+            -n "${{ steps.resolve.outputs.llvm_artifact }}" \
+            -D "$CODON_LLVM_DIR/install" || true
+
+      - name: Build LLVM
+        id: llvm-build
         shell: bash
         run: |
-          ./all.sh
+          set -euo pipefail
+          OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          LLVM_SHARED_GLOB="libLLVM*.so*"
+          CMAKE_OSX_ARGS=()
+          if [ "$OS_NAME" = "darwin" ]; then
+            LLVM_SHARED_GLOB="libLLVM*.dylib"
+            CMAKE_OSX_ARGS=(-DCMAKE_OSX_ARCHITECTURES=arm64)
+          fi
+
+          if [ -d "${CODON_LLVM_DIR}/install/lib/cmake/llvm" ]; then
+            if ls "${CODON_LLVM_DIR}/install/lib"/$LLVM_SHARED_GLOB >/dev/null 2>&1; then
+              echo "::notice::Using cached LLVM"
+              echo "built=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          echo "::notice::Building LLVM from source"
+          rm -rf "${CODON_LLVM_DIR}"
+          git clone --depth 1 -b "${LLVM_BRANCH}" https://github.com/exaloop/llvm-project "${CODON_LLVM_DIR}"
+          cmake -S "${CODON_LLVM_DIR}/llvm" -B "${CODON_LLVM_DIR}/build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_ENABLE_RTTI=ON \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_BUILD_LLVM_DYLIB=ON \
+            -DLLVM_LINK_LLVM_DYLIB=ON \
+            -DLLVM_TARGETS_TO_BUILD="${LLVM_TARGETS}" \
+            "${CMAKE_OSX_ARGS[@]}" \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+          cmake --build "${CODON_LLVM_DIR}/build"
+          cmake --install "${CODON_LLVM_DIR}/build" --prefix "${CODON_LLVM_DIR}/install"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save LLVM cache
+        if: steps.llvm-build.outputs.built == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CODON_LLVM_DIR }}
+          key: codon-llvm-${{ runner.os }}-${{ runner.arch }}-${{ steps.resolve.outputs.llvm_sha }}
+
+      - name: Upload LLVM artifact
+        if: steps.llvm-build.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.resolve.outputs.llvm_artifact }}
+          path: ${{ env.CODON_LLVM_DIR }}/install
+          retention-days: 90
+
+      # ========== CODON ==========
+      - name: Download Codon artifact (if cached)
+        if: steps.resolve.outputs.codon_needs_build != 'true' && steps.resolve.outputs.codon_run_id != ''
+        id: codon-download
+        continue-on-error: true
+        run: |
+          mkdir -p "$CODON_ARTIFACT_DIR"
+          if gh run download "${{ steps.resolve.outputs.codon_run_id }}" \
+              -n "${{ steps.resolve.outputs.codon_artifact }}" \
+              -D "$CODON_ARTIFACT_DIR"; then
+            CODON_TAR="$(ls "$CODON_ARTIFACT_DIR"/codon-*.tar.zst 2>/dev/null | head -n 1)"
+            if [ -n "$CODON_TAR" ]; then
+              mkdir -p "$CODON_ARTIFACT_DIR/extract"
+              zstd -dc "$CODON_TAR" | tar -C "$CODON_ARTIFACT_DIR/extract" -xf -
+              echo "CODON_PATH=$CODON_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
+              echo "downloaded=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "downloaded=false" >> "$GITHUB_OUTPUT"
+
+      - name: Build Codon
+        id: codon-build
+        if: steps.resolve.outputs.codon_needs_build == 'true' || steps.codon-download.outputs.downloaded != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::notice::Building Codon"
+          export LLVM_OVERRIDE="$CODON_LLVM_DIR/install/lib/cmake/llvm"
+          export CODON_ENABLE_OPENMP=OFF
+
+          OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          if [ "$OS_NAME" = "darwin" ]; then
+            ./compile_codon_macos.sh
+          else
+            ./compile_codon_linux.sh
+          fi
+
+          mkdir -p "$CODON_ARTIFACT_DIR"
+          tar -C "$BIN_DIR" -c codon | zstd -19 -o "$CODON_ARTIFACT_DIR/codon-${{ matrix.platform }}-${{ steps.resolve.outputs.codon_sha }}.tar.zst"
+          echo "CODON_PATH=$(pwd)/$BIN_DIR/codon" >> "$GITHUB_ENV"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Codon artifact
+        if: steps.codon-build.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.resolve.outputs.codon_artifact }}
+          path: ${{ env.CODON_ARTIFACT_DIR }}/codon-${{ matrix.platform }}-${{ steps.resolve.outputs.codon_sha }}.tar.zst
+          retention-days: 90
+
+      # ========== SEQURE ==========
+      - name: Download Sequre artifact (if cached)
+        if: steps.resolve.outputs.sequre_needs_build != 'true' && steps.resolve.outputs.sequre_run_id != ''
+        id: sequre-download
+        continue-on-error: true
+        run: |
+          mkdir -p "$SEQURE_ARTIFACT_DIR"
+          if gh run download "${{ steps.resolve.outputs.sequre_run_id }}" \
+              -n "${{ steps.resolve.outputs.sequre_artifact }}" \
+              -D "$SEQURE_ARTIFACT_DIR"; then
+            SEQURE_TAR="$(ls "$SEQURE_ARTIFACT_DIR"/sequre-*.tar.zst 2>/dev/null | head -n 1)"
+            if [ -n "$SEQURE_TAR" ]; then
+              mkdir -p "$SEQURE_ARTIFACT_DIR/extract"
+              zstd -dc "$SEQURE_TAR" | tar -C "$SEQURE_ARTIFACT_DIR/extract" -xf -
+              echo "CODON_PATH=$SEQURE_ARTIFACT_DIR/extract/codon" >> "$GITHUB_ENV"
+              echo "downloaded=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "downloaded=false" >> "$GITHUB_OUTPUT"
+
+      - name: Build Sequre
+        id: sequre-build
+        if: steps.resolve.outputs.sequre_needs_build == 'true' || steps.sequre-download.outputs.downloaded != 'true'
+        env:
+          LLVM_PATH: ${{ env.CODON_LLVM_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::notice::Building Sequre"
+          CODON_PATH="$CODON_PATH" ./compile_sequre.sh
+
+          mkdir -p "$SEQURE_ARTIFACT_DIR"
+          tar -C "$(dirname "$CODON_PATH")" -c "$(basename "$CODON_PATH")" | \
+            zstd -19 -o "$SEQURE_ARTIFACT_DIR/sequre-${{ matrix.platform }}-${{ steps.resolve.outputs.sequre_sha }}.tar.zst"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Sequre artifact
+        if: steps.sequre-build.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.resolve.outputs.sequre_artifact }}
+          path: ${{ env.SEQURE_ARTIFACT_DIR }}/sequre-${{ matrix.platform }}-${{ steps.resolve.outputs.sequre_sha }}.tar.zst
+          retention-days: 90
+
+      # ========== SYQURE ==========
+      - name: Download Syqure artifact (if cached)
+        if: steps.resolve.outputs.syqure_needs_build != 'true' && steps.resolve.outputs.syqure_run_id != ''
+        id: syqure-download
+        continue-on-error: true
+        run: |
+          mkdir -p "$SYQURE_ARTIFACT_DIR"
+          if gh run download "${{ steps.resolve.outputs.syqure_run_id }}" \
+              -n "${{ steps.resolve.outputs.syqure_artifact }}" \
+              -D "$SYQURE_ARTIFACT_DIR"; then
+            SYQURE_TAR="$(ls "$SYQURE_ARTIFACT_DIR"/syqure-*.tar.zst 2>/dev/null | head -n 1)"
+            if [ -n "$SYQURE_TAR" ]; then
+              mkdir -p "$SYQURE_ARTIFACT_DIR/extract"
+              zstd -dc "$SYQURE_TAR" | tar -C "$SYQURE_ARTIFACT_DIR/extract" -xf -
+              echo "downloaded=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "downloaded=false" >> "$GITHUB_OUTPUT"
+
+      - name: Build Syqure
+        id: syqure-build
+        if: steps.resolve.outputs.syqure_needs_build == 'true' || steps.syqure-download.outputs.downloaded != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::notice::Building Syqure"
+          CODON_PATH="$CODON_PATH" ./bin_libs.sh
+          export SYQURE_BUNDLE_FILE="$(pwd)/syqure/bundles/$(rustc -vV | awk '/host:/{print $2}').tar.zst"
+          cargo build -p syqure
+
+          mkdir -p "$SYQURE_ARTIFACT_DIR"
+          tar -C . -c \
+            target/debug/syqure \
+            syqure/bundles/*.tar.zst | zstd -19 -o "$SYQURE_ARTIFACT_DIR/syqure-${{ matrix.platform }}-${{ steps.resolve.outputs.syqure_sha }}.tar.zst"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Syqure artifact
+        if: steps.syqure-build.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.resolve.outputs.syqure_artifact }}
+          path: ${{ env.SYQURE_ARTIFACT_DIR }}/syqure-${{ matrix.platform }}-${{ steps.resolve.outputs.syqure_sha }}.tar.zst
+          retention-days: 90
+
+      # ========== FINALIZE ==========
+      - name: Copy binaries to bin directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$BIN_DIR"
+
+          if [ -d "$CODON_PATH" ]; then
+            rm -rf "$BIN_DIR/codon"
+            cp -R "$CODON_PATH" "$BIN_DIR/codon"
+          fi
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_FILE="$(pwd)/syqure/bundles/$(rustc -vV | awk '/host:/{print $2}').tar.zst"
+          if [ -f "$BUNDLE_FILE" ]; then
+            export SYQURE_BUNDLE_FILE="$BUNDLE_FILE"
+            export SYQURE_BUNDLE_CACHE="$(mktemp -d)"
+            ./target/debug/syqure example/two_party_sum_simple.codon
+          else
+            echo "::warning::Bundle not found, skipping smoke test"
+          fi
 
       - name: Commit and push updates
         if: inputs.push_changes
         shell: bash
         run: |
           set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           if ! git status --porcelain bin syqure/bundles | grep -q .; then
-            echo "No bin or bundle changes to commit."
+            echo "::notice::No bin or bundle changes to commit"
             exit 0
           fi
+
           git add bin syqure/bundles
-          git commit -m "chore: refresh ${{
-            matrix.platform
-          }} bins" || exit 0
+          git commit -m "chore: refresh ${{ matrix.platform }} bins" || exit 0
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "${GITHUB_REF_NAME}"
