@@ -47,8 +47,10 @@ echo "==> Copying Codon/Sequre libs into dist"
 rm -rf "$DIST_DIR/lib/codon"
 # Dereference symlinks so stdlib is bundled as real files.
 cp -R -L "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
-if [ ! -d "$DIST_DIR/lib/codon/stdlib" ]; then
-  echo "==> stdlib missing in install; copying from source"
+# Always replace stdlib with source checkout to avoid stale/broken symlinks.
+if [ -d "$ROOT_DIR/codon/stdlib" ]; then
+  echo "==> Refreshing bundled stdlib from source"
+  rm -rf "$DIST_DIR/lib/codon/stdlib"
   cp -R "$ROOT_DIR/codon/stdlib" "$DIST_DIR/lib/codon/"
 fi
 
