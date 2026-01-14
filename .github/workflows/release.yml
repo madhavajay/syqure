@@ -305,7 +305,18 @@ jobs:
           fi
           BUNDLE_DIR="$(mktemp -d)"
           BUNDLE_TAR="$BUNDLE_DIR/codon-macos-arm64.tar.zst"
-          tar -C "$BUNDLE_ROOT" -ch . | zstd -19 -o "$BUNDLE_TAR"
+          # Stage bundle contents and replace stdlib symlink with source files
+          STAGE_DIR="$(mktemp -d)"
+          cp -R "$BUNDLE_ROOT/." "$STAGE_DIR/"
+          rm -rf "$STAGE_DIR/lib/codon/stdlib"
+          if [ -d "codon/stdlib" ]; then
+            echo "==> Bundling stdlib from source"
+            cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
+          else
+            echo "ERROR: codon/stdlib not found" >&2
+            exit 1
+          fi
+          tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_TAR"
           echo "SYQURE_BUNDLE_FILE=$BUNDLE_TAR" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
@@ -350,7 +361,18 @@ jobs:
           fi
           BUNDLE_DIR="$(mktemp -d)"
           BUNDLE_TAR="$BUNDLE_DIR/codon-linux-x86.tar.zst"
-          tar -C "$BUNDLE_ROOT" -ch . | zstd -19 -o "$BUNDLE_TAR"
+          # Stage bundle contents and replace stdlib symlink with source files
+          STAGE_DIR="$(mktemp -d)"
+          cp -R "$BUNDLE_ROOT/." "$STAGE_DIR/"
+          rm -rf "$STAGE_DIR/lib/codon/stdlib"
+          if [ -d "codon/stdlib" ]; then
+            echo "==> Bundling stdlib from source"
+            cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
+          else
+            echo "ERROR: codon/stdlib not found" >&2
+            exit 1
+          fi
+          tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_TAR"
           echo "SYQURE_BUNDLE_FILE=$BUNDLE_TAR" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
