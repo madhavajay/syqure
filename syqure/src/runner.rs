@@ -20,6 +20,8 @@ pub struct CompileOptions {
     pub libs: Vec<String>,
     /// Extra linker flags (rare).
     pub linker_flags: String,
+    /// Suppress compiler warnings.
+    pub quiet: bool,
 }
 
 impl Default for CompileOptions {
@@ -33,6 +35,7 @@ impl Default for CompileOptions {
             program_args: Vec::new(),
             libs: Vec::new(),
             linker_flags: String::new(),
+            quiet: true,
         }
     }
 }
@@ -106,6 +109,7 @@ impl Syqure {
             release: self.opts.release,
             standalone,
             shared_lib: false,
+            quiet: self.opts.quiet,
         }
     }
 

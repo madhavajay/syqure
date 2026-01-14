@@ -3,8 +3,6 @@ name: Syqure CI
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 env:
@@ -36,7 +34,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgmp10 zstd llvm-dev
+            libgmp10 zstd wget lsb-release software-properties-common gnupg
+          # Install LLVM 17 (matches Codon build)
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-17 main" | \
+            sudo tee /etc/apt/sources.list.d/llvm-17.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends llvm-17-dev
 
       - name: Smoke test (precompiled bundle)
         shell: bash
@@ -49,12 +53,13 @@ jobs:
           fi
           BUNDLE_DIR="$(mktemp -d)"
           BUNDLE_TAR="$BUNDLE_DIR/codon-${{ matrix.platform }}.tar.zst"
-          tar -C "$BUNDLE_ROOT" -c . | zstd -19 -o "$BUNDLE_TAR"
+          # Use -h to dereference symlinks (stdlib is symlinked to codon submodule)
+          tar -C "$BUNDLE_ROOT" -ch . | zstd -19 -o "$BUNDLE_TAR"
           export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
           export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
           export SYQURE_CPP_INCLUDE="$BUNDLE_ROOT/include"
           export SYQURE_CPP_LIB_DIRS="$BUNDLE_ROOT/lib/codon"
-          export SYQURE_LLVM_INCLUDE="$(llvm-config --includedir)"
+          export SYQURE_LLVM_INCLUDE="$(llvm-config-17 --includedir)"
           cargo build -p syqure
           OUT=$(./target/debug/syqure example/two_party_sum_simple.codon)
           echo "$OUT"

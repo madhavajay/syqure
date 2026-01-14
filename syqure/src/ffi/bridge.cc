@@ -1,8 +1,11 @@
 #include "bridge.h"
 
+#include <cstdio>
+#include <fcntl.h>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -11,6 +14,37 @@
 #include "codon/config/config.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
+
+// RAII helper to suppress stderr when quiet mode is enabled
+class StderrSuppressor {
+public:
+  explicit StderrSuppressor(bool suppress) : suppress_(suppress), saved_fd_(-1), restored_(false) {
+    if (suppress_) {
+      fflush(stderr);
+      saved_fd_ = dup(STDERR_FILENO);
+      int devnull = open("/dev/null", O_WRONLY);
+      if (devnull >= 0) {
+        dup2(devnull, STDERR_FILENO);
+        close(devnull);
+      }
+    }
+  }
+  ~StderrSuppressor() { restore(); }
+  // Manually restore stderr (e.g., before running compiled program)
+  void restore() {
+    if (suppress_ && saved_fd_ >= 0 && !restored_) {
+      fflush(stderr);
+      dup2(saved_fd_, STDERR_FILENO);
+      close(saved_fd_);
+      saved_fd_ = -1;
+      restored_ = true;
+    }
+  }
+private:
+  bool suppress_;
+  int saved_fd_;
+  bool restored_;
+};
 
 namespace {
 std::string errorToString(llvm::Error err) {
@@ -60,6 +94,7 @@ SyBuildResult makeError(const std::string &msg) {
 
 SyBuildResult sy_codon_run(const SyCompileOpts &opts,
                            const rust::Vec<rust::String> &prog_args) {
+  StderrSuppressor suppressor(opts.quiet);
   SyBuildResult res{};
   std::vector<std::string> disabled_opts;
   for (const auto &s : opts.disabled_opts)
@@ -97,12 +132,16 @@ SyBuildResult sy_codon_run(const SyCompileOpts &opts,
   std::vector<std::string> libs;
   for (const auto &lib : opts.libs)
     libs.emplace_back(std::string(lib.data(), lib.size()));
+
+  // Restore stderr before running so program output is visible
+  suppressor.restore();
   compiler->getLLVMVisitor()->run(args, libs);
   res.status = 0;
   return res;
 }
 
 SyBuildResult sy_codon_build_exe(const SyCompileOpts &opts, rust::Str output) {
+  StderrSuppressor suppressor(opts.quiet);
   SyBuildResult res{};
   std::vector<std::string> disabled_opts;
   for (const auto &s : opts.disabled_opts)

@@ -26,6 +26,10 @@ struct Args {
     #[arg(long, global = true)]
     skip_mhe_setup: bool,
 
+    /// Show compiler warnings (hidden by default)
+    #[arg(long, global = true)]
+    show_warnings: bool,
+
     /// Path to Codon installation (defaults to CODON_PATH or ./codon/install)
     #[arg(long, env = "CODON_PATH", global = true)]
     codon_path: Option<PathBuf>,
@@ -89,6 +93,7 @@ fn run_source(args: &Args, source: &PathBuf) -> Result<()> {
     }
     opts.release = args.release;
     opts.run_after_build = !args.build_only;
+    opts.quiet = !args.show_warnings;
 
     // Build program args, prepending --skip-mhe-setup if requested
     let mut program_args = Vec::new();
