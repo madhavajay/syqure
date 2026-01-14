@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "syqure"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python bindings for the syqure Rust library - Codon/Sequre compiler wrapper"
 requires-python = ">=3.8,<3.14"
 authors = [{ name = "Madhava Jay", email = "madhava@openmined.org" }]
