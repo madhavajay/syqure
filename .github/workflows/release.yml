@@ -303,40 +303,18 @@ jobs:
             echo "Missing precompiled Codon bundle at $BUNDLE_ROOT" >&2
             exit 1
           fi
-          BUNDLE_DIR="$(mktemp -d)"
-          BUNDLE_TAR="$BUNDLE_DIR/codon-macos-arm64.tar.zst"
-          # Stage bundle contents and replace stdlib symlink with source files
-          STAGE_DIR="$(mktemp -d)"
+          # Stage CODON_PATH with resolved symlinks (stdlib from source)
+          STAGE_DIR="$(mktemp -d)/codon"
+          mkdir -p "$STAGE_DIR"
           cp -R "$BUNDLE_ROOT/." "$STAGE_DIR/"
           rm -rf "$STAGE_DIR/lib/codon/stdlib"
-          if [ -d "codon/stdlib" ]; then
-            echo "==> Bundling codon stdlib from source"
-            cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
-          else
-            echo "ERROR: codon/stdlib not found" >&2
-            exit 1
-          fi
-          # Also bundle sequre stdlib from source
+          cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
           rm -rf "$STAGE_DIR/lib/codon/plugins/sequre/stdlib"
-          if [ -d "sequre/stdlib" ]; then
-            echo "==> Bundling sequre stdlib from source"
-            cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
-          else
-            echo "ERROR: sequre/stdlib not found" >&2
-            exit 1
-          fi
-          # Bundle libgmp (required at runtime by sequre)
-          GMP_LIB="$(brew --prefix gmp)/lib/libgmp.dylib"
-          if [ -f "$GMP_LIB" ]; then
-            echo "==> Bundling libgmp from $GMP_LIB"
-            cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.dylib"
-            cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.so"
-          else
-            echo "ERROR: libgmp not found at $GMP_LIB" >&2
-            exit 1
-          fi
-          tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_TAR"
-          echo "SYQURE_BUNDLE_FILE=$BUNDLE_TAR" >> "$GITHUB_ENV"
+          cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
+          # Use bin_libs.sh to create proper bundle (includes libgmp, etc.)
+          CODON_PATH="$STAGE_DIR" ./bin_libs.sh
+          TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
+          echo "SYQURE_BUNDLE_FILE=$(pwd)/syqure/bundles/${TRIPLE}.tar.zst" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
           echo "SYQURE_LLVM_INCLUDE=$(brew --prefix llvm@17)/include" >> "$GITHUB_ENV"
@@ -378,39 +356,18 @@ jobs:
             echo "Missing precompiled Codon bundle at $BUNDLE_ROOT" >&2
             exit 1
           fi
-          BUNDLE_DIR="$(mktemp -d)"
-          BUNDLE_TAR="$BUNDLE_DIR/codon-linux-x86.tar.zst"
-          # Stage bundle contents and replace stdlib symlink with source files
-          STAGE_DIR="$(mktemp -d)"
+          # Stage CODON_PATH with resolved symlinks (stdlib from source)
+          STAGE_DIR="$(mktemp -d)/codon"
+          mkdir -p "$STAGE_DIR"
           cp -R "$BUNDLE_ROOT/." "$STAGE_DIR/"
           rm -rf "$STAGE_DIR/lib/codon/stdlib"
-          if [ -d "codon/stdlib" ]; then
-            echo "==> Bundling codon stdlib from source"
-            cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
-          else
-            echo "ERROR: codon/stdlib not found" >&2
-            exit 1
-          fi
-          # Also bundle sequre stdlib from source
+          cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
           rm -rf "$STAGE_DIR/lib/codon/plugins/sequre/stdlib"
-          if [ -d "sequre/stdlib" ]; then
-            echo "==> Bundling sequre stdlib from source"
-            cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
-          else
-            echo "ERROR: sequre/stdlib not found" >&2
-            exit 1
-          fi
-          # Bundle libgmp (required at runtime by sequre)
-          GMP_LIB="$(find /usr/lib -name 'libgmp.so*' 2>/dev/null | head -n 1)"
-          if [ -n "$GMP_LIB" ] && [ -f "$GMP_LIB" ]; then
-            echo "==> Bundling libgmp from $GMP_LIB"
-            cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.so"
-          else
-            echo "ERROR: libgmp not found" >&2
-            exit 1
-          fi
-          tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_TAR"
-          echo "SYQURE_BUNDLE_FILE=$BUNDLE_TAR" >> "$GITHUB_ENV"
+          cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
+          # Use bin_libs.sh to create proper bundle (includes libgmp, etc.)
+          CODON_PATH="$STAGE_DIR" ./bin_libs.sh
+          TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
+          echo "SYQURE_BUNDLE_FILE=$(pwd)/syqure/bundles/${TRIPLE}.tar.zst" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
           echo "SYQURE_LLVM_INCLUDE=$(llvm-config-17 --includedir)" >> "$GITHUB_ENV"
@@ -476,17 +433,17 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            7z a ../../../syc-${{ matrix.target }}.zip ${{ matrix.binary }}
+            7z a ../../../syqure-${{ matrix.target }}.zip ${{ matrix.binary }}
           else
-            tar czf ../../../syc-${{ matrix.target }}.tar.gz ${{ matrix.binary }}
+            tar czf ../../../syqure-${{ matrix.target }}.tar.gz ${{ matrix.binary }}
           fi
           cd -
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: syc-${{ matrix.target }}
-          path: syc-${{ matrix.target }}.*
+          name: syqure-${{ matrix.target }}
+          path: syqure-${{ matrix.target }}.*
 
   build-docker:
     name: Build Docker image (linux-x86_64)
@@ -517,13 +474,13 @@ jobs:
       - name: Download linux release binary
         uses: actions/download-artifact@v4
         with:
-          name: syc-x86_64-unknown-linux-gnu
+          name: syqure-x86_64-unknown-linux-gnu
           path: artifacts/linux-release
 
       - name: Extract linux release binary
         run: |
           set -euo pipefail
-          tar -xzf artifacts/linux-release/syc-x86_64-unknown-linux-gnu.tar.gz -C artifacts/linux-release
+          tar -xzf artifacts/linux-release/syqure-x86_64-unknown-linux-gnu.tar.gz -C artifacts/linux-release
           if [ ! -f artifacts/linux-release/syqure ]; then
             echo "Linux release binary not found." >&2
             exit 1
@@ -700,7 +657,7 @@ jobs:
           fetch_artifact "$LLVM_RUN_ID" "$LLVM_ARTIFACT"
           fetch_artifact "$SEQURE_RUN_ID" "$SEQURE_ARTIFACT"
           fetch_artifact "$SYQURE_RUN_ID" "$SYQURE_ARTIFACT"
-          fetch_artifact "$DOCKER_RUN_ID" "$DOCKER_ARTIFACT"
+          # Skip docker tar - we push to registry instead
 
       - name: Create Release
         env:
@@ -735,7 +692,8 @@ jobs:
       - name: Upload Release Assets
         run: |
           shopt -s globstar nullglob
-          for file in artifacts/**/*.{tar.gz,zip,tar.zst}; do
+          # Only upload binary archives (.tar.gz, .zip), not pipeline artifacts (.tar.zst)
+          for file in artifacts/**/*.{tar.gz,zip}; do
             asset_name=$(basename "$file")
             echo "Uploading $asset_name"
             gh release upload v${{ steps.version.outputs.version }} "$file" \
