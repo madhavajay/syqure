@@ -25,3 +25,4 @@ python/syqure/lib/
 _dump_*
 **/.ipynb_checkpoints/*
 .claude/*
+.env
