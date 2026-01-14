@@ -2,13 +2,6 @@ name: Codon Binaries (Linux)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - compile_codon.sh
-      - compile_codon_linux.sh
-      - codon
-      - .github/workflows/codon-binaries.yml
 
 env:
   CARGO_TERM_COLOR: always
