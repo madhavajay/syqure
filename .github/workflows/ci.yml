@@ -37,13 +37,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgmp10 zstd
+            libgmp10 zstd llvm-dev
 
       - name: Install runtime deps (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           brew update
-          brew install zstd
+          brew install zstd llvm
 
       - name: Smoke test (precompiled bundle)
         shell: bash
@@ -59,6 +59,11 @@ jobs:
           tar -C "$BUNDLE_ROOT" -c . | zstd -19 -o "$BUNDLE_TAR"
           export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
           export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            export SYQURE_LLVM_INCLUDE="$(llvm-config --includedir)"
+          else
+            export SYQURE_LLVM_INCLUDE="$(brew --prefix llvm)/include"
+          fi
           OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
           echo "$OUT"
           echo "$OUT" | grep "CP1: my input = 5, sum = 14"
