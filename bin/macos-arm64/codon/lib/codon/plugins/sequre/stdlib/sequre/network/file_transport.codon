@@ -1,12 +1,16 @@
 import os
+import time
 
 from internal.gc import sizeof
 
-from sequre.constants import FILE_TRANSPORT_DIR, FILE_TRANSPORT_POLL_MS, NUMBER_OF_PARTIES
+from sequre.constants import (
+    FILE_TRANSPORT_DIR, FILE_TRANSPORT_POLL_MS, NUMBER_OF_PARTIES,
+    PARTY_EMAILS, DATASITES_ROOT, FILE_TRANSPORT_KEEP, FILE_TRANSPORT_DEBUG)
 
 from C import access(cobj, int) -> int
 from C import usleep(int) -> int
 from C import unlink(str) -> int
+from C import rename(cobj, cobj) -> int
 
 
 @tuple
@@ -20,27 +24,57 @@ channels = dict[int, FileChannel]()
 send_seq = dict[int, int]()
 recv_seq = dict[int, int]()
 
-def _wait_for_ready(path: str):
+def _wait_for_file(path: str):
     poll_us = max(1, FILE_TRANSPORT_POLL_MS) * 1000
     while access(path.c_str(), 0) != 0:
         usleep(poll_us)
 
 def _ensure_dir(path: str):
-    if access(path.c_str(), 0) == 0:
+    if path == "" or path == "/":
         return
-    try:
-        os.mkdir(path)
-    except OSError:
-        pass
+    parts = path.split("/")
+    curr = ""
+    for part in parts:
+        if part == "":
+            if curr == "":
+                curr = "/"
+            continue
+        if curr == "" or curr == "/":
+            curr = f"/{part}"
+        else:
+            curr = f"{curr}/{part}"
+        if access(curr.c_str(), 0) == 0:
+            continue
+        try:
+            os.mkdir(curr)
+        except OSError:
+            pass
 
 def _channel_dir(base_dir: str, from_pid: int, to_pid: int) -> str:
     return f"{base_dir}/{from_pid}_to_{to_pid}"
 
 def _msg_path(base_dir: str, from_pid: int, to_pid: int, seq: int) -> str:
-    return f"{_channel_dir(base_dir, from_pid, to_pid)}/{seq:08d}.msg"
+    return f"{_channel_dir(base_dir, from_pid, to_pid)}/{seq:08d}.request"
 
-def _ready_path(base_dir: str, from_pid: int, to_pid: int, seq: int) -> str:
-    return f"{_channel_dir(base_dir, from_pid, to_pid)}/{seq:08d}.ready"
+def _base_dir_for_pid(pid: int) -> str:
+    if DATASITES_ROOT != "" and PARTY_EMAILS:
+        if pid < 0 or pid >= len(PARTY_EMAILS):
+            raise ValueError("file transport: pid out of range for PARTY_EMAILS")
+        return f"{DATASITES_ROOT}/{PARTY_EMAILS[pid]}/{FILE_TRANSPORT_DIR}"
+    return FILE_TRANSPORT_DIR
+
+def _log_pid(pid: int, message: str):
+    if not FILE_TRANSPORT_DEBUG:
+        return
+    ts_ms = int(time.monotonic_ns() / 1_000_000)
+    base_dir = _base_dir_for_pid(pid)
+    _ensure_dir(base_dir)
+    log_path = f"{base_dir}/file_transport.log"
+    try:
+        with open(log_path, "a+") as f:
+            f.write(f"{ts_ms} {message}\n")
+    except Exception:
+        pass
 
 
 def file_socket_id(local_pid: int, remote_pid: int) -> int:
@@ -53,25 +87,40 @@ def register_channel(sock_fd: int, local_pid: int, remote_pid: int, base_dir: st
         send_seq[sock_fd] = 0
     if sock_fd not in recv_seq:
         recv_seq[sock_fd] = 0
-    _ensure_dir(base_dir)
-    _ensure_dir(_channel_dir(base_dir, local_pid, remote_pid))
-    _ensure_dir(_channel_dir(base_dir, remote_pid, local_pid))
+    local_dir = _base_dir_for_pid(local_pid)
+    _ensure_dir(local_dir)
+    _ensure_dir(_channel_dir(local_dir, local_pid, remote_pid))
+    _ensure_dir(_channel_dir(local_dir, remote_pid, local_pid))
+    _log_pid(
+        local_pid,
+        f"register local_pid={local_pid} remote_pid={remote_pid} local_dir={local_dir}",
+    )
 
 
 def send_file(sock_fd: int, jar: Jar, msg_len: int) -> int:
     ch = channels[sock_fd]
     seq = send_seq[sock_fd]
-    msg_path = _msg_path(ch.base_dir, ch.local_pid, ch.remote_pid, seq)
-    ready_path = _ready_path(ch.base_dir, ch.local_pid, ch.remote_pid, seq)
+    base_dir = _base_dir_for_pid(ch.local_pid)
+    msg_path = _msg_path(base_dir, ch.local_pid, ch.remote_pid, seq)
+    tmp_path = f"{msg_path}.tmp"
+    start_ms = int(time.monotonic_ns() / 1_000_000)
+    _log_pid(
+        ch.local_pid,
+        f"send {ch.local_pid}->{ch.remote_pid} seq={seq} path={msg_path} len={msg_len}",
+    )
 
-    with open(msg_path, "wb") as f:
+    with open(tmp_path, "wb") as f:
         msg_len64 = i64(msg_len)
         _C.fwrite(__ptr__(msg_len64).as_byte(), 1, sizeof(i64), f.fp)
         _C.fwrite(jar, 1, msg_len, f.fp)
         f.flush()
-
-    with open(ready_path, "wb"):
-        pass
+    if rename(tmp_path.c_str(), msg_path.c_str()) != 0:
+        raise IOError("file transport: failed to rename temp message")
+    end_ms = int(time.monotonic_ns() / 1_000_000)
+    _log_pid(
+        ch.local_pid,
+        f"send_done {ch.local_pid}->{ch.remote_pid} seq={seq} total_ms={end_ms - start_ms}",
+    )
 
     send_seq[sock_fd] = seq + 1
     return msg_len
@@ -80,23 +129,50 @@ def send_file(sock_fd: int, jar: Jar, msg_len: int) -> int:
 def receive_file(sock_fd: int, msg_len: int) -> Jar:
     ch = channels[sock_fd]
     seq = recv_seq[sock_fd]
-    msg_path = _msg_path(ch.base_dir, ch.remote_pid, ch.local_pid, seq)
-    ready_path = _ready_path(ch.base_dir, ch.remote_pid, ch.local_pid, seq)
+    base_dir = _base_dir_for_pid(ch.remote_pid)
+    msg_path = _msg_path(base_dir, ch.remote_pid, ch.local_pid, seq)
+    _log_pid(
+        ch.local_pid,
+        f"recv {ch.remote_pid}->{ch.local_pid} seq={seq} wait={msg_path}",
+    )
 
-    _wait_for_ready(ready_path)
-
-    with open(msg_path, "rb") as f:
-        len_buf = ptr[byte](sizeof(i64))
-        if int(_C.fread(len_buf, 1, sizeof(i64), f.fp)) != sizeof(i64):
-            raise IOError("file transport: failed to read message length")
-        file_len = ptr[i64](len_buf)[0]
-        if file_len != msg_len:
-            raise IOError(f"file transport: expected {msg_len} bytes, got {file_len}")
-        data_buf = ptr[byte](file_len)
-        if int(_C.fread(data_buf, 1, file_len, f.fp)) != file_len:
-            raise IOError("file transport: failed to read message body")
-
-    unlink(msg_path)
-    unlink(ready_path)
-    recv_seq[sock_fd] = seq + 1
-    return data_buf
+    wait_start_ms = int(time.monotonic_ns() / 1_000_000)
+    _wait_for_file(msg_path)
+    wait_ms = int(time.monotonic_ns() / 1_000_000) - wait_start_ms
+    _log_pid(
+        ch.local_pid,
+        f"recv_ready {ch.remote_pid}->{ch.local_pid} seq={seq} wait_ms={wait_ms}",
+    )
+    poll_us = max(1, FILE_TRANSPORT_POLL_MS) * 1000
+    attempts = 0
+    while True:
+        try:
+            read_start_ms = int(time.monotonic_ns() / 1_000_000)
+            with open(msg_path, "rb") as f:
+                len_buf = ptr[byte](sizeof(i64))
+                if int(_C.fread(len_buf, 1, sizeof(i64), f.fp)) != sizeof(i64):
+                    raise IOError("file transport: failed to read message length")
+                file_len = ptr[i64](len_buf)[0]
+                if file_len != msg_len:
+                    raise IOError(f"file transport: expected {msg_len} bytes, got {file_len}")
+                data_buf = ptr[byte](file_len)
+                if int(_C.fread(data_buf, 1, file_len, f.fp)) != file_len:
+                    raise IOError("file transport: failed to read message body")
+            read_ms = int(time.monotonic_ns() / 1_000_000) - read_start_ms
+            if not FILE_TRANSPORT_KEEP:
+                unlink(msg_path)
+            recv_seq[sock_fd] = seq + 1
+            _log_pid(
+                ch.local_pid,
+                f"recv_done {ch.remote_pid}->{ch.local_pid} seq={seq} read_ms={read_ms}",
+            )
+            return data_buf
+        except IOError:
+            attempts += 1
+            if attempts == 1 or attempts % 100 == 0:
+                _log_pid(
+                    ch.local_pid,
+                    f"recv_retry {ch.remote_pid}->{ch.local_pid} seq={seq} attempt={attempts}",
+                )
+            usleep(poll_us)
+            continue
