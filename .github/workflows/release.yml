@@ -265,7 +265,7 @@ jobs:
         run: |
           sudo apt-get update
           if [ "${{ inputs.use_precompiled_bins }}" = "true" ]; then
-            sudo apt-get install -y zstd wget lsb-release software-properties-common gnupg
+            sudo apt-get install -y zstd wget lsb-release software-properties-common gnupg libgmp-dev
             # Install LLVM 17 (matches Codon build)
             wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
             echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-17 main" | \
@@ -280,7 +280,7 @@ jobs:
         if: matrix.os == 'macos-latest' && inputs.build_macos && inputs.use_precompiled_bins
         run: |
           brew update
-          brew install zstd llvm@17
+          brew install zstd llvm@17 gmp
 
       - name: Download macOS arm64 bundle
         if: matrix.os == 'macos-latest' && inputs.build_macos && !inputs.use_precompiled_bins
@@ -323,6 +323,16 @@ jobs:
             cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
           else
             echo "ERROR: sequre/stdlib not found" >&2
+            exit 1
+          fi
+          # Bundle libgmp (required at runtime by sequre)
+          GMP_LIB="$(brew --prefix gmp)/lib/libgmp.dylib"
+          if [ -f "$GMP_LIB" ]; then
+            echo "==> Bundling libgmp from $GMP_LIB"
+            cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.dylib"
+            cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.so"
+          else
+            echo "ERROR: libgmp not found at $GMP_LIB" >&2
             exit 1
           fi
           tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_TAR"
@@ -388,6 +398,15 @@ jobs:
             cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
           else
             echo "ERROR: sequre/stdlib not found" >&2
+            exit 1
+          fi
+          # Bundle libgmp (required at runtime by sequre)
+          GMP_LIB="$(find /usr/lib -name 'libgmp.so*' 2>/dev/null | head -n 1)"
+          if [ -n "$GMP_LIB" ] && [ -f "$GMP_LIB" ]; then
+            echo "==> Bundling libgmp from $GMP_LIB"
+            cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.so"
+          else
+            echo "ERROR: libgmp not found" >&2
             exit 1
           fi
           tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_TAR"
