@@ -303,18 +303,24 @@ jobs:
             echo "Missing precompiled Codon bundle at $BUNDLE_ROOT" >&2
             exit 1
           fi
-          # Stage CODON_PATH with resolved symlinks (stdlib from source)
-          STAGE_DIR="$(mktemp -d)/codon"
-          mkdir -p "$STAGE_DIR"
+          # Stage bundle with resolved symlinks
+          STAGE_DIR="$(mktemp -d)"
           cp -R "$BUNDLE_ROOT/." "$STAGE_DIR/"
+          # Replace stdlib symlinks with source files
           rm -rf "$STAGE_DIR/lib/codon/stdlib"
           cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
           rm -rf "$STAGE_DIR/lib/codon/plugins/sequre/stdlib"
           cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
-          # Use bin_libs.sh to create proper bundle (includes libgmp, etc.)
-          CODON_PATH="$STAGE_DIR" ./bin_libs.sh
+          # Bundle libgmp
+          GMP_LIB="$(brew --prefix gmp)/lib/libgmp.dylib"
+          cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.dylib"
+          cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.so"
+          # Create bundle
           TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
-          echo "SYQURE_BUNDLE_FILE=$(pwd)/syqure/bundles/${TRIPLE}.tar.zst" >> "$GITHUB_ENV"
+          BUNDLE_OUT="syqure/bundles/${TRIPLE}.tar.zst"
+          mkdir -p "$(dirname "$BUNDLE_OUT")"
+          tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_OUT"
+          echo "SYQURE_BUNDLE_FILE=$(pwd)/$BUNDLE_OUT" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
           echo "SYQURE_LLVM_INCLUDE=$(brew --prefix llvm@17)/include" >> "$GITHUB_ENV"
@@ -356,18 +362,23 @@ jobs:
             echo "Missing precompiled Codon bundle at $BUNDLE_ROOT" >&2
             exit 1
           fi
-          # Stage CODON_PATH with resolved symlinks (stdlib from source)
-          STAGE_DIR="$(mktemp -d)/codon"
-          mkdir -p "$STAGE_DIR"
+          # Stage bundle with resolved symlinks
+          STAGE_DIR="$(mktemp -d)"
           cp -R "$BUNDLE_ROOT/." "$STAGE_DIR/"
+          # Replace stdlib symlinks with source files
           rm -rf "$STAGE_DIR/lib/codon/stdlib"
           cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
           rm -rf "$STAGE_DIR/lib/codon/plugins/sequre/stdlib"
           cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
-          # Use bin_libs.sh to create proper bundle (includes libgmp, etc.)
-          CODON_PATH="$STAGE_DIR" ./bin_libs.sh
+          # Bundle libgmp
+          GMP_LIB="$(find /usr/lib -name 'libgmp.so*' 2>/dev/null | head -n 1)"
+          cp -L "$GMP_LIB" "$STAGE_DIR/lib/codon/libgmp.so"
+          # Create bundle
           TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
-          echo "SYQURE_BUNDLE_FILE=$(pwd)/syqure/bundles/${TRIPLE}.tar.zst" >> "$GITHUB_ENV"
+          BUNDLE_OUT="syqure/bundles/${TRIPLE}.tar.zst"
+          mkdir -p "$(dirname "$BUNDLE_OUT")"
+          tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_OUT"
+          echo "SYQURE_BUNDLE_FILE=$(pwd)/$BUNDLE_OUT" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
           echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
           echo "SYQURE_LLVM_INCLUDE=$(llvm-config-17 --includedir)" >> "$GITHUB_ENV"
