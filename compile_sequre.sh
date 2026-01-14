@@ -289,3 +289,11 @@ cmake --build "$SEQURE_PATH/build" --config "$BUILD_TYPE"
 cmake --install "$SEQURE_PATH/build" --prefix "$CODON_PATH/lib/codon/plugins/sequre"
 
 echo "Sequre plugin installed to $CODON_PATH/lib/codon/plugins/sequre"
+SEQURE_STDLIB_SRC="$SEQURE_PATH/stdlib"
+SEQURE_STDLIB_DST="$CODON_PATH/lib/codon/plugins/sequre/stdlib"
+if [[ -d "$SEQURE_STDLIB_SRC" ]]; then
+  rm -rf "$SEQURE_STDLIB_DST"
+  ln -s "$SEQURE_STDLIB_SRC" "$SEQURE_STDLIB_DST"
+else
+  echo "Warning: Sequre stdlib source not found at $SEQURE_STDLIB_SRC; keeping installed stdlib." >&2
+fi
