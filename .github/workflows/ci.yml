@@ -59,12 +59,15 @@ jobs:
           tar -C "$BUNDLE_ROOT" -c . | zstd -19 -o "$BUNDLE_TAR"
           export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
           export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
+          export SYQURE_CPP_INCLUDE="$BUNDLE_ROOT/include"
+          export SYQURE_CPP_LIB_DIRS="$BUNDLE_ROOT/lib/codon"
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             export SYQURE_LLVM_INCLUDE="$(llvm-config --includedir)"
           else
             export SYQURE_LLVM_INCLUDE="$(brew --prefix llvm)/include"
           fi
-          OUT=$(cargo run -p syqure -- example/two_party_sum_simple.codon)
+          cargo build -p syqure
+          OUT=$(./target/debug/syqure example/two_party_sum_simple.codon)
           echo "$OUT"
           echo "$OUT" | grep "CP1: my input = 5, sum = 14"
           echo "$OUT" | grep "CP2: my input = 9, sum = 14"
