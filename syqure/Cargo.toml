@@ -18,6 +18,9 @@ thiserror = { workspace = true }
 clap = { version = "4.5", features = ["derive", "env"] }
 tar = "0.4"
 zstd = { version = "0.13", default-features = false, features = ["legacy"] }
+regex = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [build-dependencies]
 cxx-build = { workspace = true }
