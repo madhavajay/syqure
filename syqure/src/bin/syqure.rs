@@ -22,6 +22,10 @@ struct Args {
     #[arg(long, global = true)]
     build_only: bool,
 
+    /// Skip MHE (homomorphic encryption) setup for MPC-only programs
+    #[arg(long, global = true)]
+    skip_mhe_setup: bool,
+
     /// Show compiler warnings (hidden by default)
     #[arg(long, global = true)]
     show_warnings: bool,
@@ -88,9 +92,16 @@ fn run_source(args: &Args, source: &PathBuf) -> Result<()> {
         opts.codon_path = path.clone();
     }
     opts.release = args.release;
-    opts.program_args = args.program_args.clone();
     opts.run_after_build = !args.build_only;
     opts.quiet = !args.show_warnings;
+
+    // Build program args, prepending --skip-mhe-setup if requested
+    let mut program_args = Vec::new();
+    if args.skip_mhe_setup {
+        program_args.push("--skip-mhe-setup".to_string());
+    }
+    program_args.extend(args.program_args.clone());
+    opts.program_args = program_args;
 
     let syqure = Syqure::new(opts);
     if let Some(output) = syqure.compile_and_maybe_run(source)? {
