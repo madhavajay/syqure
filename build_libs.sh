@@ -45,7 +45,8 @@ fi
 
 echo "==> Copying Codon/Sequre libs into dist"
 rm -rf "$DIST_DIR/lib/codon"
-cp -R "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
+# Dereference symlinks so stdlib is bundled as real files.
+cp -R -L "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
 
 # Create a per-target bundle
 TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"

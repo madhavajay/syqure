@@ -74,12 +74,17 @@ jobs:
           git submodule status > /tmp/submods.txt
           echo "hash=$(sha256sum /tmp/submods.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
 
+      - name: Compute bundle script hash
+        id: bundle
+        run: |
+          echo "hash=$(sha256sum build_libs.sh | awk '{print $1}')" >> $GITHUB_OUTPUT
+
       - name: Restore bundle cache
         id: cache
         uses: actions/cache@v4
         with:
           path: syqure/bundles/aarch64-apple-darwin.tar.zst
-          key: syqure-bundle-${{ steps.submodules.outputs.hash }}-aarch64-apple-darwin
+          key: syqure-bundle-${{ steps.submodules.outputs.hash }}-${{ steps.bundle.outputs.hash }}-aarch64-apple-darwin
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -109,7 +114,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: syqure/bundles/aarch64-apple-darwin.tar.zst
-          key: syqure-bundle-${{ steps.submodules.outputs.hash }}-aarch64-apple-darwin
+          key: syqure-bundle-${{ steps.submodules.outputs.hash }}-${{ steps.bundle.outputs.hash }}-aarch64-apple-darwin
 
       - name: Upload macOS arm64 bundle
         uses: actions/upload-artifact@v4
