@@ -5,11 +5,13 @@ on:
   push:
     branches:
       - madhava/syqure
+      - madhava/syqure-macos
     paths-ignore:
       - "ci/artifacts.json"
   pull_request:
     branches:
       - madhava/syqure
+      - madhava/syqure-macos
     paths-ignore:
       - "ci/artifacts.json"
 
