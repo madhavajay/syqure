@@ -11,6 +11,7 @@ mod bridge {
         release: bool,
         standalone: bool,
         shared_lib: bool,
+        quiet: bool,
     }
 
     #[derive(Debug)]
