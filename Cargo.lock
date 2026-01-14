@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "syqure"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "clap",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "syqure-py"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "pyo3",
