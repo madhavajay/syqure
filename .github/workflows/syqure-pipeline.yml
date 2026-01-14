@@ -601,6 +601,16 @@ jobs:
           path: ${{ env.SYQURE_ARTIFACT_DIR }}/syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}.tar.zst
           retention-days: 30
 
+      - name: Smoke test (precompiled Codon bundle)
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="$(mktemp -d)"
+          BUNDLE_TAR="$BUNDLE_DIR/codon-${PLATFORM}.tar.zst"
+          tar -C "$BIN_DIR/codon" -c . | zstd -19 -o "$BUNDLE_TAR"
+          export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
+          export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
+          "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" example/two_party_sum_simple.codon
+
       - name: Smoke test
         run: |
           export SYQURE_BUNDLE_FILE="$SYQURE_ARTIFACT_DIR/extract/syqure/bundles/$(rustc -vV | awk '/host:/{print $2}').tar.zst"
@@ -1086,6 +1096,16 @@ jobs:
           name: syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}
           path: ${{ env.SYQURE_ARTIFACT_DIR }}/syqure-cli-${{ env.PLATFORM }}-${{ steps.resolve.outputs.docker_sha }}.tar.zst
           retention-days: 30
+
+      - name: Smoke test (precompiled Codon bundle)
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="$(mktemp -d)"
+          BUNDLE_TAR="$BUNDLE_DIR/codon-${PLATFORM}.tar.zst"
+          tar -C "$BIN_DIR/codon" -c . | zstd -19 -o "$BUNDLE_TAR"
+          export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
+          export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
+          "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" example/two_party_sum_simple.codon
 
       - name: Smoke test
         run: |
