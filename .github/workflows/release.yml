@@ -310,10 +310,19 @@ jobs:
           cp -R "$BUNDLE_ROOT/." "$STAGE_DIR/"
           rm -rf "$STAGE_DIR/lib/codon/stdlib"
           if [ -d "codon/stdlib" ]; then
-            echo "==> Bundling stdlib from source"
+            echo "==> Bundling codon stdlib from source"
             cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
           else
             echo "ERROR: codon/stdlib not found" >&2
+            exit 1
+          fi
+          # Also bundle sequre stdlib from source
+          rm -rf "$STAGE_DIR/lib/codon/plugins/sequre/stdlib"
+          if [ -d "sequre/stdlib" ]; then
+            echo "==> Bundling sequre stdlib from source"
+            cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
+          else
+            echo "ERROR: sequre/stdlib not found" >&2
             exit 1
           fi
           tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_TAR"
@@ -366,10 +375,19 @@ jobs:
           cp -R "$BUNDLE_ROOT/." "$STAGE_DIR/"
           rm -rf "$STAGE_DIR/lib/codon/stdlib"
           if [ -d "codon/stdlib" ]; then
-            echo "==> Bundling stdlib from source"
+            echo "==> Bundling codon stdlib from source"
             cp -R "codon/stdlib" "$STAGE_DIR/lib/codon/"
           else
             echo "ERROR: codon/stdlib not found" >&2
+            exit 1
+          fi
+          # Also bundle sequre stdlib from source
+          rm -rf "$STAGE_DIR/lib/codon/plugins/sequre/stdlib"
+          if [ -d "sequre/stdlib" ]; then
+            echo "==> Bundling sequre stdlib from source"
+            cp -R "sequre/stdlib" "$STAGE_DIR/lib/codon/plugins/sequre/"
+          else
+            echo "ERROR: sequre/stdlib not found" >&2
             exit 1
           fi
           tar -C "$STAGE_DIR" -c . | zstd -19 -o "$BUNDLE_TAR"
