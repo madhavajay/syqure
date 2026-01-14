@@ -132,7 +132,24 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run workspace tests
-        run: cargo test --workspace --all-features --exclude syqure --exclude syqure-py
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKGS="$(cargo metadata --no-deps --format-version 1 | python3 - <<'PY'
+          import json, sys
+          data = json.load(sys.stdin)
+          exclude = {"syqure", "syqure-py"}
+          names = [p["name"] for p in data["packages"] if p["name"] not in exclude]
+          print(" ".join(names))
+          PY
+          )"
+          if [[ -z "$PKGS" ]]; then
+            echo "No workspace crates to test after excludes."
+            exit 0
+          fi
+          for pkg in $PKGS; do
+            cargo test -p "$pkg" --all-features
+          done
 
   check-version:
     name: Check if version needs bump
