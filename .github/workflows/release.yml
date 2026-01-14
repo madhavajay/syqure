@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: true
+      use_precompiled_bins:
+        description: 'Use precompiled Codon/Sequre from ./bin'
+        required: false
+        type: boolean
+        default: false
       bump_type:
         description: 'Version bump type'
         required: false
@@ -55,7 +60,7 @@ env:
 jobs:
   bundle-macos-arm:
     name: Build Bundles (macOS arm64)
-    if: ${{ inputs.build_macos }}
+    if: ${{ inputs.build_macos && !inputs.use_precompiled_bins }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -244,22 +249,49 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && inputs.build_linux
         run: |
           sudo apt-get update
-          sudo apt-get install -y zstd
+          if [ "${{ inputs.use_precompiled_bins }}" = "true" ]; then
+            sudo apt-get install -y zstd llvm-dev
+          else
+            sudo apt-get install -y zstd
+          fi
+
+      - name: Install build deps (macOS)
+        if: matrix.os == 'macos-latest' && inputs.build_macos && inputs.use_precompiled_bins
+        run: |
+          brew update
+          brew install zstd llvm
 
       - name: Download macOS arm64 bundle
-        if: matrix.os == 'macos-latest' && inputs.build_macos
+        if: matrix.os == 'macos-latest' && inputs.build_macos && !inputs.use_precompiled_bins
         uses: actions/download-artifact@v4
         with:
           name: syqure-bundle-aarch64-apple-darwin
           path: syqure/bundles
 
       - name: Set macOS bundle path
-        if: matrix.os == 'macos-latest' && inputs.build_macos
+        if: matrix.os == 'macos-latest' && inputs.build_macos && !inputs.use_precompiled_bins
         run: |
           echo "SYQURE_BUNDLE_FILE=${{ github.workspace }}/syqure/bundles/aarch64-apple-darwin.tar.zst" >> "$GITHUB_ENV"
 
+      - name: Prepare precompiled bundle (macOS)
+        if: matrix.os == 'macos-latest' && inputs.build_macos && inputs.use_precompiled_bins
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="bin/macos-arm64/codon"
+          if [ ! -d "$BUNDLE_ROOT" ]; then
+            echo "Missing precompiled Codon bundle at $BUNDLE_ROOT" >&2
+            exit 1
+          fi
+          BUNDLE_DIR="$(mktemp -d)"
+          BUNDLE_TAR="$BUNDLE_DIR/codon-macos-arm64.tar.zst"
+          tar -C "$BUNDLE_ROOT" -c . | zstd -19 -o "$BUNDLE_TAR"
+          echo "SYQURE_BUNDLE_FILE=$BUNDLE_TAR" >> "$GITHUB_ENV"
+          echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
+          echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
+          echo "SYQURE_LLVM_INCLUDE=$(brew --prefix llvm)/include" >> "$GITHUB_ENV"
+
       - name: Download Linux bundle (cached)
-        if: matrix.os == 'ubuntu-latest' && inputs.build_linux
+        if: matrix.os == 'ubuntu-latest' && inputs.build_linux && !inputs.use_precompiled_bins
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -285,6 +317,23 @@ jobs:
             exit 1
           fi
           echo "SYQURE_BUNDLE_FILE=$BUNDLE_PATH" >> "$GITHUB_ENV"
+
+      - name: Prepare precompiled bundle (linux)
+        if: matrix.os == 'ubuntu-latest' && inputs.build_linux && inputs.use_precompiled_bins
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="bin/linux-x86/codon"
+          if [ ! -d "$BUNDLE_ROOT" ]; then
+            echo "Missing precompiled Codon bundle at $BUNDLE_ROOT" >&2
+            exit 1
+          fi
+          BUNDLE_DIR="$(mktemp -d)"
+          BUNDLE_TAR="$BUNDLE_DIR/codon-linux-x86.tar.zst"
+          tar -C "$BUNDLE_ROOT" -c . | zstd -19 -o "$BUNDLE_TAR"
+          echo "SYQURE_BUNDLE_FILE=$BUNDLE_TAR" >> "$GITHUB_ENV"
+          echo "SYQURE_CPP_INCLUDE=$BUNDLE_ROOT/include" >> "$GITHUB_ENV"
+          echo "SYQURE_CPP_LIB_DIRS=$BUNDLE_ROOT/lib/codon" >> "$GITHUB_ENV"
+          echo "SYQURE_LLVM_INCLUDE=$(llvm-config --includedir)" >> "$GITHUB_ENV"
 
       - name: Install protoc
         uses: arduino/setup-protoc@v2
@@ -401,6 +450,7 @@ jobs:
           fi
 
       - name: Download Sequre artifact (cached)
+        if: ${{ !inputs.use_precompiled_bins }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -432,7 +482,16 @@ jobs:
           rm -rf "$DOCKER_CTX"
           mkdir -p "$DOCKER_CTX/target/debug" "$DOCKER_CTX/bin/codon/lib"
           cp artifacts/linux-release/syqure "$DOCKER_CTX/target/debug/syqure"
-          cp -R ci/_artifacts/sequre/extract/codon/lib/codon "$DOCKER_CTX/bin/codon/lib/"
+          if [ "${{ inputs.use_precompiled_bins }}" = "true" ]; then
+            CODON_SRC="bin/linux-x86/codon/lib/codon"
+          else
+            CODON_SRC="ci/_artifacts/sequre/extract/codon/lib/codon"
+          fi
+          if [ ! -d "$CODON_SRC" ]; then
+            echo "Missing Codon libs at $CODON_SRC" >&2
+            exit 1
+          fi
+          cp -R "$CODON_SRC" "$DOCKER_CTX/bin/codon/lib/"
           cp -R example "$DOCKER_CTX/example"
           cp docker/Dockerfile.syqure "$DOCKER_CTX/Dockerfile.syqure"
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
