@@ -135,14 +135,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PKGS="$(cargo metadata --no-deps --format-version 1 | python3 - <<'PY'
-          import json, sys
-          data = json.load(sys.stdin)
-          exclude = {"syqure", "syqure-py"}
-          names = [p["name"] for p in data["packages"] if p["name"] not in exclude]
-          print(" ".join(names))
-          PY
-          )"
+          PKGS="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; data=json.load(sys.stdin); exclude={"syqure","syqure-py"}; names=[p["name"] for p in data["packages"] if p["name"] not in exclude]; print(" ".join(names))')"
           if [[ -z "$PKGS" ]]; then
             echo "No workspace crates to test after excludes."
             exit 0
