@@ -4,14 +4,14 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - madhava/syqure
-      - madhava/syqure-macos
     paths-ignore:
       - "ci/artifacts.json"
   pull_request:
     branches:
+      - main
       - madhava/syqure
-      - madhava/syqure-macos
     paths-ignore:
       - "ci/artifacts.json"
 
