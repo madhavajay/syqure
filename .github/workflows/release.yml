@@ -396,7 +396,7 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          cargo build --release --target ${{ matrix.target }}
+          cargo build -p syqure --release --target ${{ matrix.target }}
 
       - name: Smoke test binary
         shell: bash
