@@ -279,7 +279,7 @@ jobs:
           fi
 
           mkdir -p "$CODON_ARTIFACT_DIR"
-          tar -C "$BIN_DIR" -c codon | zstd -19 -o "$CODON_ARTIFACT_DIR/codon-${{ matrix.platform }}-${{ steps.resolve.outputs.codon_sha }}.tar.zst"
+          tar -C "$BIN_DIR" -ch codon | zstd -19 -o "$CODON_ARTIFACT_DIR/codon-${{ matrix.platform }}-${{ steps.resolve.outputs.codon_sha }}.tar.zst"
           echo "CODON_PATH=$(pwd)/$BIN_DIR/codon" >> "$GITHUB_ENV"
           echo "built=true" >> "$GITHUB_OUTPUT"
 
@@ -324,7 +324,7 @@ jobs:
           CODON_PATH="$CODON_PATH" ./compile_sequre.sh
 
           mkdir -p "$SEQURE_ARTIFACT_DIR"
-          tar -C "$(dirname "$CODON_PATH")" -c "$(basename "$CODON_PATH")" | \
+          tar -C "$(dirname "$CODON_PATH")" -ch "$(basename "$CODON_PATH")" | \
             zstd -19 -o "$SEQURE_ARTIFACT_DIR/sequre-${{ matrix.platform }}-${{ steps.resolve.outputs.sequre_sha }}.tar.zst"
           echo "built=true" >> "$GITHUB_OUTPUT"
 
@@ -368,7 +368,7 @@ jobs:
           cargo build -p syqure
 
           mkdir -p "$SYQURE_ARTIFACT_DIR"
-          tar -C . -c \
+          tar -C . -ch \
             target/debug/syqure \
             syqure/bundles/*.tar.zst | zstd -19 -o "$SYQURE_ARTIFACT_DIR/syqure-${{ matrix.platform }}-${{ steps.resolve.outputs.syqure_sha }}.tar.zst"
           echo "built=true" >> "$GITHUB_OUTPUT"

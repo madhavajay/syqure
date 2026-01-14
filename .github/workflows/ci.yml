@@ -53,7 +53,8 @@ jobs:
           fi
           BUNDLE_DIR="$(mktemp -d)"
           BUNDLE_TAR="$BUNDLE_DIR/codon-${{ matrix.platform }}.tar.zst"
-          tar -C "$BUNDLE_ROOT" -c . | zstd -19 -o "$BUNDLE_TAR"
+          # Use -h to dereference symlinks (stdlib is symlinked to codon submodule)
+          tar -C "$BUNDLE_ROOT" -ch . | zstd -19 -o "$BUNDLE_TAR"
           export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
           export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
           export SYQURE_CPP_INCLUDE="$BUNDLE_ROOT/include"

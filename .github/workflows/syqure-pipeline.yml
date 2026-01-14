@@ -594,7 +594,7 @@ jobs:
           set -euo pipefail
           BUNDLE_DIR="$(mktemp -d)"
           BUNDLE_TAR="$BUNDLE_DIR/codon-${PLATFORM}.tar.zst"
-          tar -C "$BIN_DIR/codon" -c . | zstd -19 -o "$BUNDLE_TAR"
+          tar -C "$BIN_DIR/codon" -ch . | zstd -19 -o "$BUNDLE_TAR"
           export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
           export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
           "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" example/two_party_sum_simple.codon
@@ -1090,7 +1090,7 @@ jobs:
           set -euo pipefail
           BUNDLE_DIR="$(mktemp -d)"
           BUNDLE_TAR="$BUNDLE_DIR/codon-${PLATFORM}.tar.zst"
-          tar -C "$BIN_DIR/codon" -c . | zstd -19 -o "$BUNDLE_TAR"
+          tar -C "$BIN_DIR/codon" -ch . | zstd -19 -o "$BUNDLE_TAR"
           export SYQURE_BUNDLE_FILE="$BUNDLE_TAR"
           export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
           "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" example/two_party_sum_simple.codon
