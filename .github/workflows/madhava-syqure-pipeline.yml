@@ -25,6 +25,7 @@ concurrency:
 jobs:
   configure-sequre:
     name: Sequre Configure (fail-fast)
+    if: ${{ github.head_ref != 'madhava/syqure-macos' && github.ref_name != 'madhava/syqure-macos' }}
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout (with submodules)
@@ -82,6 +83,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++
 
   build-linux-x86_64:
+    if: ${{ github.head_ref != 'madhava/syqure-macos' && github.ref_name != 'madhava/syqure-macos' }}
     runs-on: ubuntu-22.04
     needs: configure-sequre
     env:
@@ -586,12 +588,12 @@ jobs:
 
       - name: Update provenance file
         if: |
-          steps.resolve.outputs.codon_needs_build == 'true' ||
+          (steps.resolve.outputs.codon_needs_build == 'true' ||
           steps.resolve.outputs.llvm_needs_build == 'true' ||
           steps.resolve.outputs.sequre_needs_build == 'true' ||
           steps.resolve.outputs.syqure_needs_build == 'true' ||
           steps.resolve.outputs.python_needs_build == 'true' ||
-          steps.resolve.outputs.docker_needs_build == 'true'
+          steps.resolve.outputs.docker_needs_build == 'true')
           && github.event_name != 'pull_request'
         run: |
           set -euo pipefail
@@ -637,12 +639,12 @@ jobs:
 
       - name: Commit provenance
         if: |
-          steps.resolve.outputs.codon_needs_build == 'true' ||
+          (steps.resolve.outputs.codon_needs_build == 'true' ||
           steps.resolve.outputs.llvm_needs_build == 'true' ||
           steps.resolve.outputs.sequre_needs_build == 'true' ||
           steps.resolve.outputs.syqure_needs_build == 'true' ||
           steps.resolve.outputs.python_needs_build == 'true' ||
-          steps.resolve.outputs.docker_needs_build == 'true'
+          steps.resolve.outputs.docker_needs_build == 'true')
           && github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions"
@@ -655,6 +657,7 @@ jobs:
   build-macos-arm64:
     runs-on: macos-14
     needs: configure-sequre
+    if: ${{ needs.configure-sequre.result == 'success' || github.head_ref == 'madhava/syqure-macos' || github.ref_name == 'madhava/syqure-macos' }}
     env:
       PLATFORM: macos-arm64
       BIN_DIR: bin/macos-arm64
@@ -1058,11 +1061,11 @@ jobs:
 
       - name: Update provenance file
         if: |
-          steps.resolve.outputs.codon_needs_build == 'true' ||
+          (steps.resolve.outputs.codon_needs_build == 'true' ||
           steps.resolve.outputs.llvm_needs_build == 'true' ||
           steps.resolve.outputs.sequre_needs_build == 'true' ||
           steps.resolve.outputs.syqure_needs_build == 'true' ||
-          steps.resolve.outputs.docker_needs_build == 'true'
+          steps.resolve.outputs.docker_needs_build == 'true')
           && github.event_name != 'pull_request'
         run: |
           set -euo pipefail
@@ -1106,11 +1109,11 @@ jobs:
 
       - name: Commit provenance
         if: |
-          steps.resolve.outputs.codon_needs_build == 'true' ||
+          (steps.resolve.outputs.codon_needs_build == 'true' ||
           steps.resolve.outputs.llvm_needs_build == 'true' ||
           steps.resolve.outputs.sequre_needs_build == 'true' ||
           steps.resolve.outputs.syqure_needs_build == 'true' ||
-          steps.resolve.outputs.docker_needs_build == 'true'
+          steps.resolve.outputs.docker_needs_build == 'true')
           && github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions"
