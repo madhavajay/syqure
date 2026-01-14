@@ -22,6 +22,10 @@ struct Args {
     #[arg(long, global = true)]
     build_only: bool,
 
+    /// Show compiler warnings (hidden by default)
+    #[arg(long, global = true)]
+    show_warnings: bool,
+
     /// Path to Codon installation (defaults to CODON_PATH or ./codon/install)
     #[arg(long, env = "CODON_PATH", global = true)]
     codon_path: Option<PathBuf>,
@@ -86,6 +90,7 @@ fn run_source(args: &Args, source: &PathBuf) -> Result<()> {
     opts.release = args.release;
     opts.program_args = args.program_args.clone();
     opts.run_after_build = !args.build_only;
+    opts.quiet = !args.show_warnings;
 
     let syqure = Syqure::new(opts);
     if let Some(output) = syqure.compile_and_maybe_run(source)? {
