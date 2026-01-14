@@ -1,0 +1,97 @@
+name: Refresh Precompiled Bins
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_changes:
+        description: 'Commit and push updated bins/bundles'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-bins-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh bins (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86
+          - os: macos-latest
+            platform: macos-arm64
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Compute submodule hash
+        id: submodules
+        shell: bash
+        run: |
+          git submodule status > /tmp/submods.txt
+          echo "hash=$(sha256sum /tmp/submods.txt | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            codon/llvm-project/build
+            codon/llvm-project/install
+            codon/build
+            codon/jupyter/build
+            sequre/build
+          key: bins-${{ runner.os }}-${{ runner.arch }}-${{ steps.submodules.outputs.hash }}
+          restore-keys: |
+            bins-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install build deps (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld cmake ninja-build pkg-config \
+            zstd libzstd-dev libedit-dev libxml2-dev \
+            python3 python3-venv python3-pip \
+            libfmt-dev patchelf \
+            libsodium-dev libssl-dev libgmp-dev
+
+      - name: Install build deps (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update
+          brew install cmake ninja zstd jq fmt libxml2 libedit openssl@3 libsodium gmp pkg-config llvm gcc libomp
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and bundle
+        shell: bash
+        run: |
+          ./all.sh
+
+      - name: Commit and push updates
+        if: inputs.push_changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git status --porcelain bin syqure/bundles | grep -q .; then
+            echo "No bin or bundle changes to commit."
+            exit 0
+          fi
+          git add bin syqure/bundles
+          git commit -m "chore: refresh ${{
+            matrix.platform
+          }} bins" || exit 0
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "${GITHUB_REF_NAME}"
