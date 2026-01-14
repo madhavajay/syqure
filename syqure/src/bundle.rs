@@ -1,5 +1,7 @@
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::collections::hash_map::DefaultHasher;
 
 use anyhow::{anyhow, Result};
 use tar::Archive;
@@ -14,18 +16,31 @@ pub fn ensure_bundle() -> Result<PathBuf> {
     let cache_dir =
         default_cache_dir().ok_or_else(|| anyhow!("cannot determine cache directory"))?;
     let target_dir = cache_dir.join("lib/codon");
+    let sig_path = cache_dir.join(".bundle.sig");
 
-    if !target_dir.exists() {
-        if target_dir.exists() {
-            fs::remove_dir_all(&target_dir).ok();
+    let bundle_bytes = load_bundle_bytes()?;
+    let sig = bundle_signature(&bundle_bytes);
+
+    let mut needs_extract = true;
+    if target_dir.exists() && sig_path.exists() {
+        if let Ok(existing) = fs::read_to_string(&sig_path) {
+            if existing == sig {
+                needs_extract = false;
+            }
+        }
+    }
+
+    if needs_extract {
+        if cache_dir.exists() {
+            fs::remove_dir_all(&cache_dir).ok();
         }
         fs::create_dir_all(&cache_dir)?;
 
-        let bundle_bytes = load_bundle_bytes()?;
         let cursor = std::io::Cursor::new(bundle_bytes);
         let mut decoder = Decoder::new(cursor)?;
         let mut archive = Archive::new(&mut decoder);
         archive.unpack(&cache_dir)?;
+        let _ = fs::write(&sig_path, sig);
     }
 
     Ok(target_dir)
@@ -82,4 +97,10 @@ fn load_bundle_bytes() -> Result<Vec<u8>> {
     {
         return Ok(BUNDLE_BYTES.to_vec());
     }
+}
+
+fn bundle_signature(bytes: &[u8]) -> String {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:x}-{}", hasher.finish(), bytes.len())
 }
