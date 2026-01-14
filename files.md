@@ -45,18 +45,17 @@ This allows sbproxy to sit transparently between Sequre and the network.
 1. Sequre sends data over TCP socket
 2. sbproxy reads: [8-byte length prefix][message data]
 3. sbproxy assigns sequential message ID
-4. sbproxy writes to: {data_dir}/{from_pid}_to_{to_pid}/{seq:08d}.msg
-5. sbproxy creates marker: {data_dir}/{from_pid}_to_{to_pid}/{seq:08d}.ready
+4. sbproxy writes to a temp file and renames to: {data_dir}/{from_pid}_to_{to_pid}/{seq:08d}.request
 ```
 
 ### Incoming Message (File → Sequre)
 
 ```
-1. sbproxy polls for .ready file (every 10ms by default)
-2. When .ready appears, reads corresponding .msg file
+1. sbproxy polls for .request file (every 10ms by default)
+2. When .request appears, reads the file
 3. Extracts [8-byte length prefix][message data]
 4. Writes to TCP socket connected to Sequre
-5. Deletes both .msg and .ready files
+5. Deletes the .request file
 ```
 
 ### File Format
@@ -69,17 +68,13 @@ Each message file contains:
 └────────────────────┴─────────────────────────┘
 ```
 
-The `.ready` marker file is empty - its existence signals the message is complete.
-
 ## Directory Structure
 
 ```
 sandbox/mpc_messages/
 ├── 0_to_1/          # Messages from CP0 to CP1
-│   ├── 00000000.msg
-│   ├── 00000000.ready
-│   ├── 00000001.msg
-│   └── 00000001.ready
+│   ├── 00000000.request
+│   └── 00000001.request
 ├── 0_to_2/          # Messages from CP0 to CP2
 ├── 1_to_0/          # Messages from CP1 to CP0
 ├── 1_to_2/          # Messages from CP1 to CP2
@@ -275,18 +270,18 @@ class CSocket:
 
     def send(self, data: ptr[byte], length: int):
         # Write message file
-        msg_path = f"{self.channel_dir}/{self.msg_counter:08d}.msg"
-        ready_path = f"{self.channel_dir}/{self.msg_counter:08d}.ready"
-        write_file(msg_path, data, length)
-        touch(ready_path)  # Atomic marker
+        msg_path = f"{self.channel_dir}/{self.msg_counter:08d}.request"
+        tmp_path = f"{msg_path}.tmp"
+        write_file(tmp_path, data, length)
+        rename(tmp_path, msg_path)
         self.msg_counter += 1
 
     def recv(self, buffer: ptr[byte], length: int) -> int:
-        # Poll for .ready file, then read .msg
-        while not exists(ready_path):
+        # Poll for .request file, then read
+        while not exists(msg_path):
             sleep_ms(10)
         data = read_file(msg_path)
-        delete(msg_path, ready_path)
+        delete(msg_path)
         return len(data)
 ```
 
@@ -356,7 +351,7 @@ Suggested next step: implement option (1) for integration with current pipeline 
 ## Design Principles
 
 1. **Transparency** - Sequre code doesn't change; sbproxy intercepts at the network layer
-2. **Reliability** - Atomic message delivery via `.ready` marker files
+2. **Reliability** - Atomic message delivery via temp file + rename
 3. **Ordering** - Sequential message IDs ensure correct delivery order
 4. **Bidirectional** - Each party pair has two directories (one per direction)
 5. **Stateless** - Messages are self-contained; proxies can restart without losing state

@@ -22,3 +22,13 @@
 /*.tar.zst
 /_dump_*
 /**/.ipynb_checkpoints
+
+!/sequre/
+!/sequre/stdlib/
+!/sequre/stdlib/sequre/
+!/sequre/stdlib/sequre/mpc/
+!/sequre/stdlib/sequre/network/
+!/sequre/stdlib/sequre/constants.codon
+!/sequre/stdlib/sequre/mpc/comms.codon
+!/sequre/stdlib/sequre/network/common.codon
+!/sequre/stdlib/sequre/network/file_transport.codon
