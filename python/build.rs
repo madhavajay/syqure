@@ -17,8 +17,14 @@ fn main() {
     }
 
     // Relative rpaths for the packaged wheel: place libs at syqure/lib/codon.
-    println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/lib/codon");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/codon");
+    match env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("macos") => {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/lib/codon");
+        }
+        _ => {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/codon");
+        }
+    }
 
     // Re-run if bundle changes
     println!("cargo:rerun-if-env-changed=SYQURE_BUNDLE_FILE");
@@ -32,6 +38,13 @@ fn repo_root() -> Option<PathBuf> {
 }
 
 fn set_bundle_and_unpack() {
+    if let Ok(val) = env::var("SYQURE_SKIP_BUNDLE_UNPACK") {
+        if val == "1" || val.eq_ignore_ascii_case("true") {
+            println!("cargo:warning=Skipping bundle unpack (SYQURE_SKIP_BUNDLE_UNPACK=1)");
+            return;
+        }
+    }
+
     let bundle_file = if let Some(val) = env::var_os("SYQURE_BUNDLE_FILE") {
         PathBuf::from(val)
     } else if let Some(root) = repo_root() {

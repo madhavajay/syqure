@@ -1,0 +1,158 @@
+import math
+
+from numpy.ndarray import ndarray
+
+from sequre.attributes import sequre
+from sequre.types.sharetensor import Sharetensor
+from sequre.stdlib.chebyshev import via_chebyshev
+from sequre.constants import CHEBYSHEV_DEGREE
+
+
+@sequre
+def sign(mpc, x):
+    return (x > 0).astype(float) * 2 - 1
+
+
+@sequre
+def maximum(mpc, x, y):
+    mask = ((x - y) > 0).astype(float)
+    return x * mask - y * (mask - 1)
+
+
+def maximum_axis(mpc, iterable, axis: int, keepdims: Static[int] = False):
+        def _linear_maximum(_iterable):
+            _max = _iterable[0]
+            for i in range(1, len(_iterable)):
+                _max = maximum(mpc, _max, _iterable[i])
+            
+            return _max
+        
+        assert 0 <= axis < iterable.ndim, "Axis out of range for maximum"
+
+        if axis == 1:
+            iterable = iterable.T
+        
+        _reduced_max = _linear_maximum(iterable)
+        _max = _reduced_max.expand_dims() if keepdims else _reduced_max
+        return _max.T if axis == 1 else _max
+
+
+@sequre
+def minimum(mpc, x, y):
+    mask = ((y - x) > 0).astype(float)
+    return x * mask - y * (mask - 1)
+
+
+@sequre
+def clip(mpc, x, low, high):
+    assert low < high, "Lower value should be smaller than the higher value while clipping"
+    low_mask = (x < low).astype(float)
+    high_mask = (x > high).astype(float)
+    return x * (1 - (low_mask + high_mask)) + low_mask * low + high_mask * high
+
+
+@sequre
+def abs(mpc, x):
+    return x * (((x > 0) * 2) - 1)
+
+
+@sequre
+def argmax(mpc, x):
+    arg, maximum = Sharetensor(0, x.modulus), x[0]
+
+    for i in range(1, len(x)):
+        new_maximum = max(mpc, maximum, x[i])
+        arg = max(mpc, arg, (new_maximum > maximum) * i)
+        maximum = new_maximum
+    
+    return arg, maximum
+
+
+def cov_max(mpc, x, *args):
+    if isinstance(x, Sharetensor):
+        return maximum(mpc, x, x.T)
+    
+    return x.cov_max(mpc, *args)
+
+
+@sequre
+def inv(mpc, x):
+    """ Matrix inverse """
+    if isinstance(x, Sharetensor) or isinstance(x, ndarray):
+        assert len(x.shape) == 2, "Cannot find inverse of non-matrix"
+        assert x.shape[0] == x.shape[1], "Cannot find inverse of non-square matrix"
+        
+        if x.shape[0] == 1:
+            return 1 / x
+
+        inverse = x.zeros()
+
+        if x.shape[0] == 2:
+            a, b, c, d = x[0, 0], x[0, 1], x[1, 0], x[1, 1]
+            det_inv = 1 / (a * d - b * c)
+
+            inverse[0, 0] = d
+            inverse[0, 1] = -b
+            inverse[1, 0] = -c
+            inverse[1, 1] = a
+
+            return inverse * det_inv
+
+        if x.shape[0] == 3:
+            a, b, c = x[0, 0], x[0, 1], x[0, 2]
+            d, e, f = x[1, 0], x[1, 1], x[1, 2]
+            g, h, i = x[2, 0], x[2, 1], x[2, 2]
+
+            A = e * i - f * h
+            B = f * g - d * i
+            C = d * h - e * g
+            D = c * h - b * i
+            E = a * i - c * g
+            F = b * g - a * h
+            G = b * f - c * e
+            H = c * d - a * f
+            I = a * e - b * d
+
+            det_inv = 1 / (a * A + b * B + c * C)
+
+            inverse[0, 0] = A
+            inverse[1, 0] = B
+            inverse[2, 0] = C
+
+            inverse[0, 1] = D
+            inverse[1, 1] = E
+            inverse[2, 1] = F
+
+            inverse[0, 2] = G
+            inverse[1, 2] = H
+            inverse[2, 2] = I
+
+            return inverse * det_inv
+        
+        raise NotImplementedError("Secure inverse of a square matrix larger than 3x3 is not implemented yet")
+    else:
+        return x.via_mpc(lambda stensor: inv(mpc, stensor))
+
+
+def chebyshev_exp(mpc, x, interval):
+    return via_chebyshev(mpc, x, math.exp, interval, CHEBYSHEV_DEGREE)
+
+
+def chebyshev_sigmoid(mpc, x, interval):
+    return via_chebyshev(mpc, x, lambda x: 1 / (1 + (-x).exp()), interval, CHEBYSHEV_DEGREE)
+
+
+def chebyshev_log(mpc, x, interval):
+    return via_chebyshev(mpc, x, math.log, interval, CHEBYSHEV_DEGREE)
+
+
+def chebyshev_mul_inv(mpc, x, interval):
+    return via_chebyshev(mpc, x, lambda x: 1 / x, interval, CHEBYSHEV_DEGREE)
+
+
+def chebyshev_sqrt(mpc, x, interval):
+    return via_chebyshev(mpc, x, math.sqrt, interval, CHEBYSHEV_DEGREE)
+
+
+def chebyshev_sqrt_inv(mpc, x, interval):
+    return via_chebyshev(mpc, x, lambda x: 1 / math.sqrt(x), interval, CHEBYSHEV_DEGREE)

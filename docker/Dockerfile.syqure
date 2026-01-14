@@ -1,0 +1,23 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libgmp10 \
+      libgmp-dev \
+      libedit2 \
+      libxml2 \
+      libsodium23 \
+      libssl3 \
+      libuuid1 \
+      zstd && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV SYQURE_BUNDLE_CACHE=/opt/syqure-cache
+ENV LD_LIBRARY_PATH=/opt/syqure-cache/lib/codon:/usr/lib/x86_64-linux-gnu
+
+WORKDIR /workspace
+
+COPY target/debug/syqure /usr/local/bin/syqure
+COPY bin/codon/lib/codon /opt/syqure-cache/lib/codon
+COPY example /workspace/example

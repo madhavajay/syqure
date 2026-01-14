@@ -1,306 +1,291 @@
 #!/usr/bin/env bash
-# Build Sequre and its dependencies (LLVM, Codon, Seq) on Linux (macOS best effort).
-# Environment overrides:
-#   SEQURE_PATH         : repo root (default: script location)
-#   SEQURE_LLVM_PATH    : LLVM build/install dir (default: $SEQURE_PATH/codon-llvm)
-#   SEQURE_CODON_PATH   : Codon build/install dir (default: $SEQURE_PATH/codon)
-#   SEQURE_SEQ_PATH     : Seq-lang build/install dir (default: $SEQURE_PATH/codon-seq)
-#   CMAKE               : cmake binary (default: cmake)
-#   NINJA_BIN           : ninja binary (default: ninja)
-#   CC / CXX            : C/C++ compilers (default: clang/clang++)
-#   BUILD_TYPE          : Debug/Release/RelWithDebInfo (default: Release)
-#   ENABLE_ASAN         : set to 1 to build Codon/Seq/Sequre with ASAN
-
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DO_CLEAN=false
+SEQURE_PATH="${SEQURE_PATH:-$ROOT_DIR/sequre}"
+OS_NAME="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH_NAME="$(uname -m | tr '[:upper:]' '[:lower:]')"
+OS_LABEL="$OS_NAME"
+ARCH_LABEL="$ARCH_NAME"
+case "$OS_NAME" in
+  darwin) OS_LABEL="macos" ;;
+  linux) OS_LABEL="linux" ;;
+esac
+case "$ARCH_NAME" in
+  arm64|aarch64) ARCH_LABEL="arm64" ;;
+  x86_64|amd64|i386|i686) ARCH_LABEL="x86" ;;
+esac
+TARGET_ID="${OS_LABEL}-${ARCH_LABEL}"
+LIB_EXT="so"
+if [[ "$OS_NAME" == "darwin" ]]; then
+  LIB_EXT="dylib"
+fi
+CC="${CC:-}"
+CXX="${CXX:-}"
+CMAKE_OSX_SYSROOT_ARGS=()
+if [[ "$OS_NAME" == "darwin" ]]; then
+  if [[ -z "$CC" ]]; then
+    CC="/usr/bin/clang"
+  fi
+  if [[ -z "$CXX" ]]; then
+    CXX="/usr/bin/clang++"
+  fi
+  if [[ -z "${SDKROOT:-}" ]]; then
+    SDKROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+  fi
+  if [[ -n "${SDKROOT:-}" ]]; then
+    export SDKROOT
+    CMAKE_OSX_SYSROOT_ARGS+=("-DCMAKE_OSX_SYSROOT=$SDKROOT")
+  fi
+else
+  if [[ -z "$CC" ]]; then
+    CC="clang"
+  fi
+  if [[ -z "$CXX" ]]; then
+    CXX="clang++"
+  fi
+fi
+export CC CXX
+if [[ -z "${CODON_PATH:-}" ]]; then
+  if [[ -d "$ROOT_DIR/bin/$TARGET_ID/codon" ]]; then
+    CODON_PATH="$ROOT_DIR/bin/$TARGET_ID/codon"
+  elif [[ -d "$ROOT_DIR/bin/codon" ]]; then
+    CODON_PATH="$ROOT_DIR/bin/codon"
+  else
+    CODON_PATH="$HOME/.codon"
+  fi
+fi
+CODON_SOURCE_DIR="${CODON_SOURCE_DIR:-}"
+if [[ -z "$CODON_SOURCE_DIR" && -d "$ROOT_DIR/codon" ]]; then
+  CODON_SOURCE_DIR="$ROOT_DIR/codon"
+fi
+LLVM_PATH="${LLVM_PATH:-$SEQURE_PATH/codon-llvm}"
+LLVM_BRANCH="${LLVM_BRANCH:-codon-17.0.6}"
+LLVM_TARGETS="${LLVM_TARGETS:-all}"
+SEQ_PATH="${SEQ_PATH:-$SEQURE_PATH/codon-seq}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
-ENABLE_ASAN="${ENABLE_ASAN:-0}"
-SKIP_SEQ="${SKIP_SEQ:-0}"
+BUILD_SEQ="${BUILD_SEQ:-0}"
+SEQURE_CLEAN="${SEQURE_CLEAN:-0}"
+
 for arg in "$@"; do
-    case "$arg" in
-        --clean) DO_CLEAN=true ;;
-        --debug) BUILD_TYPE="Debug" ;;
-        --relwithdebinfo) BUILD_TYPE="RelWithDebInfo" ;;
-        --asan) ENABLE_ASAN=1 ;;
-        --no-seq) SKIP_SEQ=1 ;;
-        *) echo "Unknown option: $arg" >&2; exit 1 ;;
-    esac
+  case "$arg" in
+    --clean) SEQURE_CLEAN=1 ;;
+    *) echo "Unknown option: $arg" >&2; exit 1 ;;
+  esac
 done
 
-# Default to the embedded Sequre source tree under this repo.
-SEQURE_PATH="${SEQURE_PATH:-$ROOT_DIR/sequre}"
-# Keep toolchain defaults anchored at the repo root so they point to the shared builds.
-SEQURE_LLVM_PATH="${SEQURE_LLVM_PATH:-$ROOT_DIR/codon-llvm}"
-SEQURE_CODON_PATH="${SEQURE_CODON_PATH:-$ROOT_DIR/codon}"
-SEQURE_SEQ_PATH="${SEQURE_SEQ_PATH:-$ROOT_DIR/codon-seq}"
-# macOS: prefer the Homebrew gcc lib path if present so we can link libgfortran
-CODON_SYSTEM_LIBRARIES="${CODON_SYSTEM_LIBRARIES:-/opt/homebrew/opt/gcc/lib/gcc/current}"
-# Use the already-downloaded xz source from the Codon build to avoid extra network fetches
-XZ_SOURCE_DIR="${XZ_SOURCE_DIR:-${SEQURE_CODON_PATH}/build/_deps/xz-src}"
-CMAKE_BIN="${CMAKE:-cmake}"
-NINJA_BIN="${NINJA_BIN:-ninja}"
-LLVM_PREFIX="${LLVM_PREFIX:-/opt/homebrew/opt/llvm}"
-# Explicitly propagate the LLVM headers so Codon/Seq builds can include llvm/Support/… headers.
-if [ -z "${LLVM_INCLUDE_DIR:-}" ]; then
-    if [ -d "${SEQURE_LLVM_PATH}/install/include" ]; then
-        LLVM_INCLUDE_DIR="${SEQURE_LLVM_PATH}/install/include"
-    elif [ -d "${LLVM_PREFIX}/include" ]; then
-        LLVM_INCLUDE_DIR="${LLVM_PREFIX}/include"
-    else
-        LLVM_INCLUDE_DIR=""
-    fi
-fi
-CC="${CC:-$LLVM_PREFIX/bin/clang}"
-CXX="${CXX:-$LLVM_PREFIX/bin/clang++}"
-COMMON_FLAGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-if [ "$ENABLE_ASAN" = "1" ]; then
-    SAN_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
-    C_FLAGS="$SAN_FLAGS"
-    CXX_FLAGS="$SAN_FLAGS -stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib"
-    LD_FLAGS="$SAN_FLAGS -nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
-else
-    C_FLAGS=""
-    CXX_FLAGS="-stdlib=libc++ -nostdinc++ -isystem $LLVM_PREFIX/include/c++/v1 -include cstdlib"
-    LD_FLAGS="-nostdlib++ -L$LLVM_PREFIX/lib/c++ -Wl,-rpath,$LLVM_PREFIX/lib/c++ -lc++ -lc++abi"
-fi
-# Add the LLVM headers explicitly so Codon’s headers (which include llvm/Support/…) resolve.
-if [ -n "$LLVM_INCLUDE_DIR" ]; then
-    C_FLAGS="$C_FLAGS -I${LLVM_INCLUDE_DIR}"
-    CXX_FLAGS="$CXX_FLAGS -I${LLVM_INCLUDE_DIR}"
-fi
-export SEQURE_PATH SEQURE_LLVM_PATH SEQURE_CODON_PATH SEQURE_SEQ_PATH CODON_SYSTEM_LIBRARIES XZ_SOURCE_DIR
-
 require_cmd() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        echo "Missing required command: $1" >&2
-        exit 1
-    fi
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    return 1
+  fi
 }
 
-ensure_ninja() {
-    if command -v "$NINJA_BIN" >/dev/null 2>&1; then
-        return
+echo "Using paths:"
+echo "  SEQURE_PATH=$SEQURE_PATH"
+echo "  CODON_PATH=$CODON_PATH"
+echo "  CODON_SOURCE_DIR=${CODON_SOURCE_DIR:-<unset>}"
+echo "  LLVM_PATH=$LLVM_PATH"
+echo "  LLVM_BRANCH=$LLVM_BRANCH"
+echo "  SEQ_PATH=$SEQ_PATH"
+echo "  BUILD_TYPE=$BUILD_TYPE"
+echo "  BUILD_SEQ=$BUILD_SEQ"
+echo "  SEQURE_CLEAN=$SEQURE_CLEAN"
+echo "  CC=$CC"
+echo "  CXX=$CXX"
+if [[ -n "${SDKROOT:-}" ]]; then
+  echo "  SDKROOT=$SDKROOT"
+fi
+
+require_cmd git
+require_cmd cmake
+require_cmd ninja
+require_cmd "$CC"
+require_cmd "$CXX"
+
+abspath() {
+  if command -v realpath >/dev/null 2>&1; then
+    if realpath -m . >/dev/null 2>&1; then
+      realpath -m "$1"
+      return
     fi
-    case "$(uname -s)" in
-        Darwin)
-            if command -v brew >/dev/null 2>&1; then
-                echo "ninja not found; installing via Homebrew..."
-                brew install ninja
-            else
-                echo "ninja not found and Homebrew is missing. Install Homebrew or set NINJA_BIN to your ninja path." >&2
-                exit 1
-            fi
-            ;;
-        Linux)
-            echo "ninja not found. Install via your package manager (e.g., sudo apt-get install ninja-build or sudo yum install ninja-build), then re-run." >&2
-            exit 1
-            ;;
-        *)
-            echo "ninja not found and automatic install is not supported on this OS. Please install ninja manually." >&2
-            exit 1
-            ;;
-    esac
+  fi
+  python3 - <<'PY' "$1"
+from pathlib import Path
+import sys
+print(Path(sys.argv[1]).resolve())
+PY
 }
 
-ensure_gcc_libs_on_macos() {
-    if [ "$(uname -s)" != "Darwin" ]; then
-        return
-    fi
-    if [ -n "${CODON_SYSTEM_LIBRARIES:-}" ]; then
-        return
-    fi
-    if ! command -v brew >/dev/null 2>&1; then
-        echo "Homebrew not found; set CODON_SYSTEM_LIBRARIES to your libgfortran path (e.g., /opt/homebrew/opt/gcc/lib/gcc/current)." >&2
-        return
-    fi
-    echo "Ensuring Homebrew gcc is installed for libgfortran..."
-    brew install gcc
-    export CODON_SYSTEM_LIBRARIES="$(brew --prefix gcc)/lib/gcc/current"
-    echo "Set CODON_SYSTEM_LIBRARIES=${CODON_SYSTEM_LIBRARIES}"
+cmake_cache_value() {
+  local cache="$1"
+  local key="$2"
+  if command -v rg >/dev/null 2>&1; then
+    rg -n "^${key}:" "$cache" 2>/dev/null | head -n 1 | cut -d= -f2- || true
+  else
+    grep -E "^${key}:" "$cache" 2>/dev/null | head -n 1 | cut -d= -f2- || true
+  fi
 }
 
-ensure_libomp_on_macos() {
-    if [ "$(uname -s)" != "Darwin" ]; then
-        return
+clean_build_if_mismatch() {
+  local build_dir="$1"
+  local label="$2"
+  shift 2
+  local cache="$build_dir/CMakeCache.txt"
+  if [[ ! -f "$cache" ]]; then
+    return 0
+  fi
+  local cache_cxx
+  cache_cxx="$(cmake_cache_value "$cache" "CMAKE_CXX_COMPILER:FILEPATH")"
+  local cache_sysroot=""
+  if [[ "$OS_NAME" == "darwin" ]]; then
+    cache_sysroot="$(cmake_cache_value "$cache" "CMAKE_OSX_SYSROOT:PATH")"
+  fi
+  local mismatch=0
+  if [[ -n "$cache_cxx" && "$cache_cxx" != "$CXX" ]]; then
+    mismatch=1
+  fi
+  if [[ "$OS_NAME" == "darwin" && -n "${SDKROOT:-}" && -n "$cache_sysroot" && "$cache_sysroot" != "$SDKROOT" ]]; then
+    mismatch=1
+  fi
+  if [[ "$mismatch" -eq 1 ]]; then
+    echo "$label build toolchain mismatch: cache_cxx=${cache_cxx:-<unset>} expected=$CXX"
+    if [[ "$OS_NAME" == "darwin" && -n "${SDKROOT:-}" ]]; then
+      echo "$label build SDKROOT mismatch: cache_sysroot=${cache_sysroot:-<unset>} expected=$SDKROOT"
     fi
-    if ! command -v brew >/dev/null 2>&1; then
-        echo "Homebrew not found; install libomp manually if CMake complains about missing OpenMP runtime." >&2
-        return
+    rm -rf "$build_dir"
+    if [[ "$#" -gt 0 ]]; then
+      rm -rf "$@"
     fi
-    if brew list --versions libomp >/dev/null 2>&1; then
-        echo "libomp already present via Homebrew."
-        return
-    fi
-    echo "Ensuring Homebrew libomp is installed..."
-    brew install libomp || true
+  fi
 }
 
-check_cmake_version() {
-    if (echo a version 3.20.0; "$CMAKE_BIN" --version) | sort -Vk3 | tail -1 | grep -q cmake; then
-        echo "CMake version ok."
-    else
-        echo "CMake >=3.20.0 required." >&2
-        exit 1
+if [[ ! -d "$CODON_PATH/include/codon" || ! -d "$CODON_PATH/lib/codon" ]]; then
+  echo "Codon install not found at $CODON_PATH" >&2
+  echo "Install Codon or set CODON_PATH to the Codon install prefix." >&2
+  exit 1
+fi
+
+CODON_PATH="$(abspath "$CODON_PATH")"
+SEQURE_PATH="$(abspath "$SEQURE_PATH")"
+LLVM_PATH="$(abspath "$LLVM_PATH")"
+SEQ_PATH="$(abspath "$SEQ_PATH")"
+if [[ -n "${CODON_SOURCE_DIR:-}" ]]; then
+  CODON_SOURCE_DIR="$(abspath "$CODON_SOURCE_DIR")"
+fi
+
+ABI_FLAG=""
+CXX_ABI_FLAGS=""
+if [[ "$OS_NAME" != "darwin" ]]; then
+  ABI_FLAG=0
+  CODONC_LIB="$CODON_PATH/lib/codon/libcodonc.${LIB_EXT}"
+  if command -v rg >/dev/null 2>&1; then
+    if rg -q "B5cxx11" <<<"$(nm -D "$CODONC_LIB" 2>/dev/null)"; then
+      ABI_FLAG=1
     fi
-}
-
-clean_build_dirs() {
-    echo "Cleaning build directories..."
-    rm -rf "$SEQURE_PATH/build"
-    rm -rf "$SEQURE_LLVM_PATH/build"
-    rm -rf "$SEQURE_SEQ_PATH/build"
-    rm -rf "$SEQURE_CODON_PATH/build"
-    rm -rf "$SEQURE_CODON_PATH/build/cmake"
-}
-
-build_llvm() {
-    if [ -d "${SEQURE_LLVM_PATH}/install/lib/cmake/llvm" ]; then
-        echo "Found existing LLVM installation at ${SEQURE_LLVM_PATH}."
-        return
+  else
+    if nm -D "$CODONC_LIB" 2>/dev/null | grep -q "B5cxx11"; then
+      ABI_FLAG=1
     fi
-    echo "Building LLVM into ${SEQURE_LLVM_PATH}..."
-    rm -rf "$SEQURE_LLVM_PATH"
-    echo "Cloning llvm-project (codon branch) with retries..."
-    for attempt in 1 2 3; do
-        if git clone --depth 1 -b codon https://github.com/exaloop/llvm-project "$SEQURE_LLVM_PATH"; then
-            break
-        fi
-        echo "Clone attempt ${attempt} failed; retrying in 10s" >&2
-        sleep 10
-    done
-    if [ ! -d "$SEQURE_LLVM_PATH/.git" ]; then
-        echo "Clone failed; falling back to tarball download..." >&2
-        mkdir -p "$SEQURE_LLVM_PATH"
-        tmp_tar="$(mktemp /tmp/llvm-project.XXXXXX.tar.gz)"
-        if curl -Lf "https://codeload.github.com/exaloop/llvm-project/tar.gz/codon" -o "$tmp_tar"; then
-            tar -xzf "$tmp_tar" --strip-components=1 -C "$SEQURE_LLVM_PATH"
-            rm -f "$tmp_tar"
-        fi
-    fi
-    if [ ! -d "$SEQURE_LLVM_PATH/.git" ] && [ ! -d "$SEQURE_LLVM_PATH/llvm" ] && [ ! -f "$SEQURE_LLVM_PATH/CMakeLists.txt" ]; then
-        echo "Error: failed to obtain exaloop/llvm-project (clone and tarball both failed)" >&2
-        exit 1
-    fi
-    pushd "$SEQURE_LLVM_PATH" >/dev/null
-    "$CMAKE_BIN" -S llvm -B build -G Ninja \
-        -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DLLVM_INCLUDE_TESTS=OFF \
-        -DLLVM_ENABLE_RTTI=ON \
-        -DLLVM_ENABLE_ZLIB=OFF \
-        -DLLVM_ENABLE_TERMINFO=OFF \
-        -DLLVM_TARGETS_TO_BUILD=all \
-        $COMMON_FLAGS
-    "$CMAKE_BIN" --build build --config "${BUILD_TYPE}"
-    "$CMAKE_BIN" --install build --prefix="$SEQURE_LLVM_PATH/install"
-    popd >/dev/null
-}
+  fi
+  CXX_ABI_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=${ABI_FLAG}"
+fi
+if [[ -d "$ROOT_DIR/compat" ]]; then
+  if [[ -n "$CXX_ABI_FLAGS" ]]; then
+    CXX_ABI_FLAGS+=" "
+  fi
+  CXX_ABI_FLAGS+="-I$ROOT_DIR/compat"
+fi
+if [[ -n "$ABI_FLAG" ]]; then
+  echo "  ABI_FLAG=$ABI_FLAG"
+fi
 
-build_codon() {
-    if [ -d "${SEQURE_CODON_PATH}/install" ]; then
-        echo "Found existing Codon installation at ${SEQURE_CODON_PATH}."
-        return
-    fi
-    echo "Building Codon into ${SEQURE_CODON_PATH}..."
-    rm -rf "$SEQURE_CODON_PATH"
-    git clone https://github.com/exaloop/codon.git "$SEQURE_CODON_PATH"
-    pushd "$SEQURE_CODON_PATH" >/dev/null
-    "$CMAKE_BIN" -S . -B build -G Ninja \
-        -DLLVM_DIR="${SEQURE_LLVM_PATH}/install/lib/cmake/llvm" \
-        -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_C_COMPILER="$CC" \
-        -DCMAKE_CXX_COMPILER="$CXX" \
-        -DCMAKE_C_FLAGS="$C_FLAGS" \
-        -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
-        -DCMAKE_EXE_LINKER_FLAGS="$LD_FLAGS" \
-        -DCMAKE_SHARED_LINKER_FLAGS="$LD_FLAGS" \
-        $COMMON_FLAGS
-    "$CMAKE_BIN" --build build --config "${BUILD_TYPE}"
-    "$CMAKE_BIN" --install build --prefix="${SEQURE_CODON_PATH}/install"
-    popd >/dev/null
-}
+if [[ ! -d "$SEQURE_PATH" ]]; then
+  echo "Sequre repo not found at $SEQURE_PATH" >&2
+  exit 1
+fi
 
-build_seq() {
-    if [ "$ENABLE_ASAN" = "1" ]; then
-        echo "Skipping Seq build under ASAN (not required for Sequre diagnostics)."
-        return
-    fi
-    if [ -d "${SEQURE_CODON_PATH}/install/lib/codon/plugins/seq" ]; then
-        echo "Found existing Seq-lang installation at ${SEQURE_CODON_PATH}/install/lib/codon/plugins/seq."
-        return
-    fi
-    echo "Building Seq-lang into ${SEQURE_SEQ_PATH}..."
-    rm -rf "$SEQURE_SEQ_PATH"
-    git clone https://github.com/exaloop/seq.git "$SEQURE_SEQ_PATH"
-    pushd "$SEQURE_SEQ_PATH" >/dev/null
-    "$CMAKE_BIN" -S . -B build -G Ninja \
-        -DLLVM_DIR="${SEQURE_LLVM_PATH}/install/lib/cmake/llvm" \
-        -DCODON_PATH="${SEQURE_CODON_PATH}/install" \
-        -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_C_COMPILER="$CC" \
-        -DCMAKE_CXX_COMPILER="$CXX" \
-        -DCMAKE_C_FLAGS="$C_FLAGS" \
-        -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
-        -DCMAKE_EXE_LINKER_FLAGS="$LD_FLAGS" \
-        -DCMAKE_SHARED_LINKER_FLAGS="$LD_FLAGS" \
-        $COMMON_FLAGS
-    "$CMAKE_BIN" --build build --config "${BUILD_TYPE}"
-    "$CMAKE_BIN" --install build --prefix="${SEQURE_CODON_PATH}/install/lib/codon/plugins/seq"
-    popd >/dev/null
-}
+clean_build_if_mismatch "$LLVM_PATH/build" "LLVM" "$LLVM_PATH/install"
 
-build_sequre() {
-    echo "Building Sequre plugin..."
-    pushd "$SEQURE_PATH" >/dev/null
-    rm -rf build
-    "$CMAKE_BIN" -S . -B build -G Ninja \
-        -DLLVM_DIR="${SEQURE_LLVM_PATH}/install/lib/cmake/llvm" \
-        -DCODON_PATH="${SEQURE_CODON_PATH}/install" \
-        -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_C_COMPILER="$CC" \
-        -DCMAKE_CXX_COMPILER="$CXX" \
-        -DCMAKE_C_FLAGS="$C_FLAGS" \
-        -DCMAKE_CXX_FLAGS="$CXX_FLAGS" \
-        -DCMAKE_EXE_LINKER_FLAGS="$LD_FLAGS" \
-        -DCMAKE_SHARED_LINKER_FLAGS="$LD_FLAGS" \
-        $COMMON_FLAGS
-    "$CMAKE_BIN" --build build --config "${BUILD_TYPE}"
-    "$CMAKE_BIN" --install build --prefix="${SEQURE_CODON_PATH}/install/lib/codon/plugins/sequre"
-    popd >/dev/null
-}
+# Build LLVM (Codon fork) if not present.
+if [[ -d "$LLVM_PATH/install/lib/cmake/llvm" ]]; then
+  echo "Found existing LLVM installation."
+else
+  echo "LLVM not installed. Building Codon LLVM..."
+  rm -rf "$LLVM_PATH"
+  git clone --depth 1 -b "$LLVM_BRANCH" https://github.com/exaloop/llvm-project "$LLVM_PATH"
+  cmake -S "$LLVM_PATH/llvm" -B "$LLVM_PATH/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_INCLUDE_TESTS=OFF \
+    -DLLVM_ENABLE_RTTI=ON \
+    -DLLVM_ENABLE_ZLIB=OFF \
+    -DLLVM_ENABLE_TERMINFO=OFF \
+    -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGETS" \
+    -DCMAKE_C_COMPILER="$CC" \
+    -DCMAKE_CXX_COMPILER="$CXX" \
+    "${CMAKE_OSX_SYSROOT_ARGS[@]}"
+  cmake --build "$LLVM_PATH/build"
+  cmake --install "$LLVM_PATH/build" --prefix "$LLVM_PATH/install"
+fi
 
-main() {
-    if [ "$(uname -s)" != "Linux" ]; then
-        echo "Warning: Sequre is supported on Linux; continuing anyway." >&2
-    fi
+if [[ "$BUILD_SEQ" == "1" ]]; then
+  # Build Seq plugin if not present.
+  if [[ -d "$CODON_PATH/lib/codon/plugins/seq" ]]; then
+    echo "Found existing Seq-lang installation."
+  else
+    echo "Seq-lang not installed. Building..."
+    rm -rf "$SEQ_PATH"
+    git clone https://github.com/exaloop/seq.git "$SEQ_PATH"
+    cmake -S "$SEQ_PATH" -B "$SEQ_PATH/build" -G Ninja \
+      -DLLVM_DIR="$LLVM_PATH/install/lib/cmake/llvm" \
+      -DCODON_PATH="$CODON_PATH" \
+      -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+      -DCMAKE_CXX_FLAGS="$CXX_ABI_FLAGS" \
+      -DCMAKE_C_COMPILER="$CC" \
+      -DCMAKE_CXX_COMPILER="$CXX" \
+      "${CMAKE_OSX_SYSROOT_ARGS[@]}"
+    cmake --build "$SEQ_PATH/build" --config "$BUILD_TYPE"
+    cmake --install "$SEQ_PATH/build" --prefix "$CODON_PATH/lib/codon/plugins/seq"
+  fi
+else
+  echo "Skipping Seq-lang build (BUILD_SEQ=$BUILD_SEQ)."
+fi
 
-    if $DO_CLEAN; then
-        clean_build_dirs
-    fi
+# Build Sequre plugin.
+echo "Building Sequre plugin..."
+if [[ "$SEQURE_CLEAN" == "1" ]]; then
+  rm -rf "$SEQURE_PATH/build"
+fi
+clean_build_if_mismatch "$SEQURE_PATH/build" "Sequre"
+CPM_VERSION="0.32.3"
+CPM_PATH="$SEQURE_PATH/build/cmake/CPM_${CPM_VERSION}.cmake"
+if [[ ! -s "$CPM_PATH" ]]; then
+  mkdir -p "$(dirname "$CPM_PATH")"
+  if [[ -n "${CODON_SOURCE_DIR:-}" && -s "$CODON_SOURCE_DIR/build/cmake/CPM_${CPM_VERSION}.cmake" ]]; then
+    cp -f "$CODON_SOURCE_DIR/build/cmake/CPM_${CPM_VERSION}.cmake" "$CPM_PATH"
+  elif [[ -s "$ROOT_DIR/codon/build/cmake/CPM_${CPM_VERSION}.cmake" ]]; then
+    cp -f "$ROOT_DIR/codon/build/cmake/CPM_${CPM_VERSION}.cmake" "$CPM_PATH"
+  elif command -v curl >/dev/null 2>&1; then
+    curl -fsSL "https://github.com/TheLartians/CPM.cmake/releases/download/v${CPM_VERSION}/CPM.cmake" -o "$CPM_PATH" || true
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$CPM_PATH" "https://github.com/TheLartians/CPM.cmake/releases/download/v${CPM_VERSION}/CPM.cmake" || true
+  fi
+  if [[ ! -s "$CPM_PATH" ]]; then
+    echo "Error: failed to obtain CPM.cmake at $CPM_PATH" >&2
+    echo "Check network access or ensure it exists before rerunning." >&2
+    exit 1
+  fi
+fi
+cmake -S "$SEQURE_PATH" -B "$SEQURE_PATH/build" -G Ninja \
+  -DLLVM_DIR="$LLVM_PATH/install/lib/cmake/llvm" \
+  -DCODON_PATH="$CODON_PATH" \
+  ${CODON_SOURCE_DIR:+-DCODON_SOURCE_DIR="$CODON_SOURCE_DIR"} \
+  -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+  -DCMAKE_CXX_FLAGS="$CXX_ABI_FLAGS" \
+  -DCMAKE_C_COMPILER="$CC" \
+  -DCMAKE_CXX_COMPILER="$CXX" \
+  "${CMAKE_OSX_SYSROOT_ARGS[@]}"
+cmake --build "$SEQURE_PATH/build" --config "$BUILD_TYPE"
+cmake --install "$SEQURE_PATH/build" --prefix "$CODON_PATH/lib/codon/plugins/sequre"
 
-    require_cmd git
-    require_cmd "$CMAKE_BIN"
-    ensure_ninja
-    require_cmd "$NINJA_BIN"
-    ensure_gcc_libs_on_macos
-    ensure_libomp_on_macos
-    check_cmake_version
-
-    build_llvm
-    build_codon
-    if [ "$SKIP_SEQ" != "1" ]; then
-        build_seq
-    else
-        echo "Skipping Seq build (SKIP_SEQ=1)."
-    fi
-    build_sequre
-
-    echo "Done. Add Sequre to your PATH (example):"
-    echo "  alias sequre=\"find . -name 'sock.*' -exec rm {} \\; && CODON_DEBUG=lt ${SEQURE_CODON_PATH}/install/bin/codon run --disable-opt=\\\"core-pythonic-list-addition-opt\\\" -plugin sequre\""
-}
-
-main "$@"
-# Usage:
-#   ./compile_sequre.sh            # normal build
-#   ./compile_sequre.sh --clean    # remove prior build dirs before building
+echo "Sequre plugin installed to $CODON_PATH/lib/codon/plugins/sequre"

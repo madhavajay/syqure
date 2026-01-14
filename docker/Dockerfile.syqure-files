@@ -1,0 +1,12 @@
+ARG BASE_IMAGE=syqure-cli:latest
+FROM ${BASE_IMAGE}
+
+COPY sequre/stdlib/sequre/constants.codon /usr/local/bin/lib/codon/plugins/sequre/stdlib/sequre/constants.codon
+COPY sequre/stdlib/sequre/mpc/comms.codon /usr/local/bin/lib/codon/plugins/sequre/stdlib/sequre/mpc/comms.codon
+COPY sequre/stdlib/sequre/network/common.codon /usr/local/bin/lib/codon/plugins/sequre/stdlib/sequre/network/common.codon
+COPY sequre/stdlib/sequre/network/file_transport.codon /usr/local/bin/lib/codon/plugins/sequre/stdlib/sequre/network/file_transport.codon
+
+COPY sequre/stdlib/sequre/constants.codon /opt/syqure-cache/lib/codon/plugins/sequre/stdlib/sequre/constants.codon
+COPY sequre/stdlib/sequre/mpc/comms.codon /opt/syqure-cache/lib/codon/plugins/sequre/stdlib/sequre/mpc/comms.codon
+COPY sequre/stdlib/sequre/network/common.codon /opt/syqure-cache/lib/codon/plugins/sequre/stdlib/sequre/network/common.codon
+COPY sequre/stdlib/sequre/network/file_transport.codon /opt/syqure-cache/lib/codon/plugins/sequre/stdlib/sequre/network/file_transport.codon
