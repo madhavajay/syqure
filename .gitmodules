@@ -1,9 +1,11 @@
 [submodule "codon"]
 	path = codon
 	url = git@github.com:madhavajay/codon.git
+	branch = madhava/syqure
 [submodule "sequre"]
 	path = sequre
 	url = git@github.com:madhavajay/sequre.git
+	branch = madhava/syqure
 [submodule "external/llvm-project"]
 	path = external/llvm-project
 	url = https://github.com/exaloop/llvm-project
