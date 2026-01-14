@@ -114,11 +114,15 @@ fn main() {
     bridge
         .file("src/ffi/bridge.cc")
         .flag_if_supported("-std=c++17")
-        // Silence benign unused-parameter warnings coming from Codon's headers.
+        // Silence benign warnings from Codon/LLVM/fmt headers.
         .flag_if_supported("-Wno-unused-parameter")
-        // Codon headers also trip -Wsign-compare; suppress for cleaner logs.
         .flag_if_supported("-Wno-sign-compare")
         .flag_if_supported("-Wno-unused-command-line-argument")
+        .flag_if_supported("-Wno-unknown-pragmas")
+        .flag_if_supported("-Wno-comment")
+        .flag_if_supported("-Wno-tautological-compare")
+        .flag_if_supported("-Wno-redundant-move")
+        .flag_if_supported("-Wno-dangling-reference")
         // Make rpaths relative so we can bundle Codon libs next to the binary.
         .flag_if_supported(if cfg!(target_os = "macos") {
             "-Wl,-rpath,@loader_path"
