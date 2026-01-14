@@ -64,6 +64,10 @@ impl Syqure {
             std::env::set_var("CODON_PLUGIN_PATH", codon_root.join("plugins"));
         }
 
+        // Sequre's gmp module does dlopen("libgmp.so") which looks in hardcoded build paths.
+        // Create symlinks so the bundled libgmp.so can be found at the expected location.
+        ensure_libgmp_available(&codon_root);
+
         clean_sockets()?;
 
         let plugin = resolve_plugin_path(&codon_root, &self.opts.plugin);
@@ -154,4 +158,51 @@ fn resolve_plugin_path(codon_root: &Path, plugin: &str) -> String {
         return candidate.to_string_lossy().into_owned();
     }
     plugin.to_string()
+}
+
+fn ensure_libgmp_available(codon_root: &Path) {
+    // The sequre plugin's gmp.codon calls dlopen("libgmp.so") which searches:
+    // 1. Relative path "libgmp.so"
+    // 2. Hardcoded build-time path like "<repo>/codon/install/lib/codon/libgmp.so"
+    //
+    // Since DYLD_LIBRARY_PATH doesn't work reliably on macOS (SIP strips it),
+    // we create a symlink at the expected location pointing to the bundled lib.
+
+    let bundled_gmp = codon_root.join("libgmp.so");
+    if !bundled_gmp.exists() {
+        return;
+    }
+
+    // Find the syqure repo root by looking for codon/install relative to current exe or cwd
+    let candidates = [
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .map(|d| d.join("../../codon/install/lib/codon")),
+        std::env::current_dir()
+            .ok()
+            .map(|d| d.join("codon/install/lib/codon")),
+        std::env::var_os("SYQURE_CODON_INSTALL")
+            .map(|p| PathBuf::from(p).join("lib/codon")),
+    ];
+
+    for candidate in candidates.into_iter().flatten() {
+        let target_dir = candidate;
+        let target_gmp = target_dir.join("libgmp.so");
+
+        // If the directory exists but libgmp.so doesn't, create symlink
+        if target_dir.exists() && !target_gmp.exists() {
+            if let Err(_) = std::os::unix::fs::symlink(&bundled_gmp, &target_gmp) {
+                // Symlink failed, try copy as fallback
+                let _ = std::fs::copy(&bundled_gmp, &target_gmp);
+            }
+            // Also handle .dylib for macOS
+            let bundled_dylib = codon_root.join("libgmp.dylib");
+            let target_dylib = target_dir.join("libgmp.dylib");
+            if bundled_dylib.exists() && !target_dylib.exists() {
+                let _ = std::os::unix::fs::symlink(&bundled_dylib, &target_dylib);
+            }
+            break;
+        }
+    }
 }

@@ -138,7 +138,7 @@ pub fn print_analysis(analysis: &Analysis) {
 
     println!("\n--- Runtime Requirements ---");
     println!("  Requires MHE setup:  {}", if analysis.runtime.needs_mhe { "Yes" } else { "No (MPC only)" });
-    println!("  Can use --skip-mhe:  {}", if analysis.runtime.can_skip_mhe { "Yes" } else { "No" });
+    println!("  Can use --skip-mhe-setup:  {}", if analysis.runtime.can_skip_mhe { "Yes" } else { "No" });
     println!("  Uses @local:         {}", if analysis.runtime.uses_local { "Yes" } else { "No" });
 
     println!("\n--- Estimated Runtime ---");
