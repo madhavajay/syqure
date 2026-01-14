@@ -2,12 +2,6 @@ name: Syqure Multistage
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - madhava/syqure
-    paths-ignore:
-      - "ci/artifacts.json"
 
 permissions:
   contents: write
