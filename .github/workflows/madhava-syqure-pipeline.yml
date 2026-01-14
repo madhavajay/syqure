@@ -659,7 +659,7 @@ jobs:
   build-macos-arm64:
     runs-on: macos-14
     needs: configure-sequre
-    if: ${{ needs.configure-sequre.result == 'success' || github.head_ref == 'madhava/syqure-macos' || github.ref_name == 'madhava/syqure-macos' }}
+    if: ${{ always() && (needs.configure-sequre.result == 'success' || github.head_ref == 'madhava/syqure-macos' || github.ref_name == 'madhava/syqure-macos') }}
     env:
       PLATFORM: macos-arm64
       BIN_DIR: bin/macos-arm64
