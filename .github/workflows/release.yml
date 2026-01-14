@@ -464,7 +464,19 @@ jobs:
           # Copy essential libs (skip stdlib - it's in the embedded bundle)
           cp -L "$LIB_SRC"/libcodon*.{dylib,so} "$RELEASE_DIR/lib/codon/" 2>/dev/null || true
           cp -L "$LIB_SRC"/libomp.{dylib,so} "$RELEASE_DIR/lib/codon/" 2>/dev/null || true
-          cp -L "$LIB_SRC"/libgmp.{dylib,so} "$RELEASE_DIR/lib/codon/" 2>/dev/null || true
+          # libgmp is installed via package manager, not in precompiled bins
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            GMP_LIB="$(brew --prefix gmp)/lib/libgmp.dylib"
+            if [[ -f "$GMP_LIB" ]]; then
+              cp -L "$GMP_LIB" "$RELEASE_DIR/lib/codon/libgmp.dylib"
+              cp -L "$GMP_LIB" "$RELEASE_DIR/lib/codon/libgmp.so"
+            fi
+          else
+            GMP_LIB="$(find /usr/lib -name 'libgmp.so*' 2>/dev/null | head -n 1)"
+            if [[ -n "$GMP_LIB" ]]; then
+              cp -L "$GMP_LIB" "$RELEASE_DIR/lib/codon/libgmp.so"
+            fi
+          fi
 
           # Copy plugins
           if [[ -d "$LIB_SRC/plugins" ]]; then
