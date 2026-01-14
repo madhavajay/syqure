@@ -430,25 +430,102 @@ jobs:
         run: |
           cargo build -p syqure --release --target ${{ matrix.target }}
 
-      - name: Smoke test binary
+      - name: Package binary with libs
         shell: bash
-        env:
-          SYQURE_BUNDLE_CACHE: ${{ github.workspace }}/.syqure-cache
         run: |
           set -euo pipefail
-          rm -rf "$SYQURE_BUNDLE_CACHE"
-          ./target/${{ matrix.target }}/release/${{ matrix.binary }} example/two_party_sum_simple.codon
+          RELEASE_DIR="syqure-release"
+          rm -rf "$RELEASE_DIR"
+          mkdir -p "$RELEASE_DIR/lib/codon"
 
-      - name: Package binary
+          BINARY="target/${{ matrix.target }}/release/${{ matrix.binary }}"
+          cp "$BINARY" "$RELEASE_DIR/"
+
+          # Determine lib source based on build type
+          if [[ "${{ inputs.use_precompiled_bins }}" == "true" ]]; then
+            if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+              LIB_SRC="bin/macos-arm64/codon/lib/codon"
+            else
+              LIB_SRC="bin/linux-x86/codon/lib/codon"
+            fi
+          else
+            # Extract from bundle for non-precompiled builds
+            BUNDLE_FILE="${SYQURE_BUNDLE_FILE:-}"
+            if [[ -n "$BUNDLE_FILE" && -f "$BUNDLE_FILE" ]]; then
+              EXTRACT_DIR="$(mktemp -d)"
+              zstd -dc "$BUNDLE_FILE" | tar -C "$EXTRACT_DIR" -xf -
+              LIB_SRC="$EXTRACT_DIR/lib/codon"
+            else
+              echo "No bundle file found" >&2
+              exit 1
+            fi
+          fi
+
+          # Copy essential libs (skip stdlib - it's in the embedded bundle)
+          cp -L "$LIB_SRC"/libcodon*.{dylib,so} "$RELEASE_DIR/lib/codon/" 2>/dev/null || true
+          cp -L "$LIB_SRC"/libomp.{dylib,so} "$RELEASE_DIR/lib/codon/" 2>/dev/null || true
+          cp -L "$LIB_SRC"/libgmp.{dylib,so} "$RELEASE_DIR/lib/codon/" 2>/dev/null || true
+
+          # Copy plugins
+          if [[ -d "$LIB_SRC/plugins" ]]; then
+            cp -R "$LIB_SRC/plugins" "$RELEASE_DIR/lib/codon/"
+          fi
+
+          # Fix rpaths to be relative
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            # Remove old rpaths and add relative one
+            OLD_RPATHS=$(otool -l "$RELEASE_DIR/${{ matrix.binary }}" | grep -A2 LC_RPATH | grep "path " | awk '{print $2}' || true)
+            for rpath in $OLD_RPATHS; do
+              install_name_tool -delete_rpath "$rpath" "$RELEASE_DIR/${{ matrix.binary }}" 2>/dev/null || true
+            done
+            install_name_tool -add_rpath "@loader_path/lib/codon" "$RELEASE_DIR/${{ matrix.binary }}"
+          else
+            # Linux: use patchelf
+            sudo apt-get install -y patchelf 2>/dev/null || true
+            patchelf --set-rpath '$ORIGIN/lib/codon' "$RELEASE_DIR/${{ matrix.binary }}" || true
+          fi
+
+      - name: Verify package contents
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            7z a ../../../syqure-${{ matrix.target }}.zip ${{ matrix.binary }}
-          else
-            tar czf ../../../syqure-${{ matrix.target }}.tar.gz ${{ matrix.binary }}
+          set -euo pipefail
+          RELEASE_DIR="syqure-release"
+          echo "=== Package contents ==="
+          ls -lah "$RELEASE_DIR"/
+          ls -lah "$RELEASE_DIR/lib/codon/" || true
+          echo "=== Total size ==="
+          du -sh "$RELEASE_DIR"
+          # Verify minimum size (should be at least 50MB with libs)
+          SIZE_KB=$(du -sk "$RELEASE_DIR" | cut -f1)
+          if [[ "$SIZE_KB" -lt 50000 ]]; then
+            echo "ERROR: Package too small ($SIZE_KB KB). Expected at least 50MB with libs." >&2
+            exit 1
           fi
-          cd -
+          echo "Package size OK: ${SIZE_KB} KB"
+
+      - name: Smoke test standalone package
+        shell: bash
+        env:
+          SYQURE_BUNDLE_CACHE: ${{ github.workspace }}/.syqure-smoke-test
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="syqure-release"
+          # Clear any cached bundle to force fresh extraction
+          rm -rf "$SYQURE_BUNDLE_CACHE"
+          # Run from the release directory to verify standalone works
+          cd "$RELEASE_DIR"
+          ./${{ matrix.binary }} ../example/two_party_sum_simple.codon
+          echo "Standalone smoke test passed!"
+
+      - name: Create release archive
+        shell: bash
+        run: |
+          RELEASE_DIR="syqure-release"
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            7z a syqure-${{ matrix.target }}.zip "$RELEASE_DIR"/*
+          else
+            tar czf syqure-${{ matrix.target }}.tar.gz -C "$RELEASE_DIR" .
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
