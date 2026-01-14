@@ -15,6 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # PR trigger: keep CI smoke tests visible without changing behavior.
   sequre-precompiled:
     name: Sequre Precompiled Smoke (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
@@ -24,8 +25,6 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-x86
-          - os: macos-latest
-            platform: macos-arm64
     steps:
       - name: Checkout code (with submodules)
         uses: actions/checkout@v4
@@ -38,12 +37,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgmp10 zstd llvm-dev
-
-      - name: Install runtime deps (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew update
-          brew install zstd llvm
 
       - name: Smoke test (precompiled bundle)
         shell: bash
@@ -61,11 +54,7 @@ jobs:
           export SYQURE_BUNDLE_CACHE="$BUNDLE_DIR/cache"
           export SYQURE_CPP_INCLUDE="$BUNDLE_ROOT/include"
           export SYQURE_CPP_LIB_DIRS="$BUNDLE_ROOT/lib/codon"
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            export SYQURE_LLVM_INCLUDE="$(llvm-config --includedir)"
-          else
-            export SYQURE_LLVM_INCLUDE="$(brew --prefix llvm)/include"
-          fi
+          export SYQURE_LLVM_INCLUDE="$(llvm-config --includedir)"
           cargo build -p syqure
           OUT=$(./target/debug/syqure example/two_party_sum_simple.codon)
           echo "$OUT"

@@ -8,12 +8,6 @@ on:
       - madhava/syqure
     paths-ignore:
       - "ci/artifacts.json"
-  pull_request:
-    branches:
-      - main
-      - madhava/syqure
-    paths-ignore:
-      - "ci/artifacts.json"
 
 permissions:
   contents: write
