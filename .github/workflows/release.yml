@@ -275,6 +275,15 @@ jobs:
         run: |
           cargo build --release --target ${{ matrix.target }}
 
+      - name: Smoke test binary
+        shell: bash
+        env:
+          SYQURE_BUNDLE_CACHE: ${{ github.workspace }}/.syqure-cache
+        run: |
+          set -euo pipefail
+          rm -rf "$SYQURE_BUNDLE_CACHE"
+          ./target/${{ matrix.target }}/release/${{ matrix.binary }} example/two_party_sum_simple.codon
+
       - name: Package binary
         shell: bash
         run: |

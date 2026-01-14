@@ -92,6 +92,7 @@ jobs:
       PLATFORM: linux-x86_64
       BIN_DIR: bin/linux-x86
       BUILD_DOCKER: "true"
+      BUILD_PYTHON: "false"
       CODON_ARTIFACT_DIR: ci/_artifacts/codon
       SEQURE_ARTIFACT_DIR: ci/_artifacts/sequre
       SYQURE_ARTIFACT_DIR: ci/_artifacts/syqure
@@ -128,6 +129,7 @@ jobs:
           VERSION="$(cat VERSION)"
           DOCKER_SHA="$SYQURE_SHA"
           BUILD_DOCKER="${BUILD_DOCKER:-true}"
+          BUILD_PYTHON="${BUILD_PYTHON:-true}"
           echo "codon_sha=$CODON_SHA" >> "$GITHUB_OUTPUT"
           echo "sequre_sha=$SEQURE_SHA" >> "$GITHUB_OUTPUT"
           echo "syqure_sha=$SYQURE_SHA" >> "$GITHUB_OUTPUT"
@@ -205,10 +207,15 @@ jobs:
             SYQURE_ARTIFACT="syqure-${PLATFORM}-${SYQURE_SHA}"
           fi
           SYQURE_RUN_ID="$(lookup_run_id "$SYQURE_ARTIFACT")"
-          if [ -z "$PYTHON_ARTIFACT" ]; then
-            PYTHON_ARTIFACT="syqure-python-${PLATFORM}-${PYTHON_SHA}"
+          if [ "$BUILD_PYTHON" = "true" ]; then
+            if [ -z "$PYTHON_ARTIFACT" ]; then
+              PYTHON_ARTIFACT="syqure-python-${PLATFORM}-${PYTHON_SHA}"
+            fi
+            PYTHON_RUN_ID="$(lookup_run_id "$PYTHON_ARTIFACT")"
+          else
+            PYTHON_ARTIFACT=""
+            PYTHON_RUN_ID=""
           fi
-          PYTHON_RUN_ID="$(lookup_run_id "$PYTHON_ARTIFACT")"
           if [ -z "$DOCKER_ARTIFACT" ]; then
             DOCKER_ARTIFACT="syqure-cli-${PLATFORM}-${DOCKER_SHA}"
           fi
@@ -233,8 +240,12 @@ jobs:
           if [ "$SYQURE_PREV_SHA" != "$SYQURE_SHA" ] || [ -z "$SYQURE_RUN_ID" ] || [ -z "$SYQURE_ARTIFACT" ] || [ "$SEQURE_NEEDS_BUILD" = "true" ]; then
             SYQURE_NEEDS_BUILD="true"
           fi
-          if [ "$PYTHON_PREV_SHA" != "$PYTHON_SHA" ] || [ -z "$PYTHON_RUN_ID" ] || [ -z "$PYTHON_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
-            PYTHON_NEEDS_BUILD="true"
+          if [ "$BUILD_PYTHON" = "true" ]; then
+            if [ "$PYTHON_PREV_SHA" != "$PYTHON_SHA" ] || [ -z "$PYTHON_RUN_ID" ] || [ -z "$PYTHON_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
+              PYTHON_NEEDS_BUILD="true"
+            fi
+          else
+            PYTHON_NEEDS_BUILD="false"
           fi
           if [ "$BUILD_DOCKER" = "true" ]; then
             if [ "$DOCKER_PREV_SHA" != "$DOCKER_SHA" ] || [ -z "$DOCKER_RUN_ID" ] || [ -z "$DOCKER_ARTIFACT" ] || [ "$SYQURE_NEEDS_BUILD" = "true" ]; then
@@ -474,7 +485,7 @@ jobs:
           zstd -dc "$SYQURE_TAR" | tar -C "$SYQURE_ARTIFACT_DIR/extract" -xf -
 
       - name: Prepare Python wheel build (if needed)
-        if: steps.resolve.outputs.python_needs_build == 'true'
+        if: env.BUILD_PYTHON == 'true' && steps.resolve.outputs.python_needs_build == 'true'
         run: |
           set -euo pipefail
           TRIPLE="$(rustc -vV | awk '/host:/{print $2}')"
@@ -506,7 +517,7 @@ jobs:
           echo "SYQURE_LLVM_INCLUDE=$LLVM_INCLUDE" >> "$GITHUB_ENV"
 
       - name: Build Python wheel (manylinux, if needed)
-        if: steps.resolve.outputs.python_needs_build == 'true'
+        if: env.BUILD_PYTHON == 'true' && steps.resolve.outputs.python_needs_build == 'true'
         uses: PyO3/maturin-action@v1
         env:
           SYQURE_BUNDLE_FILE: ${{ env.SYQURE_BUNDLE_FILE }}
@@ -525,7 +536,7 @@ jobs:
             cmake --build fmt-10.2.1/build --target install
 
       - name: Inject bundle into wheel (if needed)
-        if: steps.resolve.outputs.python_needs_build == 'true'
+        if: env.BUILD_PYTHON == 'true' && steps.resolve.outputs.python_needs_build == 'true'
         env:
           SYQURE_BUNDLE_FILE: ${{ env.SYQURE_BUNDLE_FILE }}
           WHEEL_OUT: ${{ env.PYTHON_ARTIFACT_DIR }}/dist
@@ -541,7 +552,7 @@ jobs:
           ./scripts/build_python_postbundle.sh
 
       - name: Upload Python wheel artifact
-        if: steps.resolve.outputs.python_needs_build == 'true'
+        if: env.BUILD_PYTHON == 'true' && steps.resolve.outputs.python_needs_build == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: syqure-python-${{ env.PLATFORM }}-${{ steps.resolve.outputs.python_sha }}
@@ -572,6 +583,15 @@ jobs:
           mkdir -p "$SYQURE_ARTIFACT_DIR"
           docker save "$IMAGE_NAME:$VERSION" | zstd -19 -o \
             "$SYQURE_ARTIFACT_DIR/syqure-cli-${PLATFORM}-${{ steps.resolve.outputs.docker_sha }}.tar.zst"
+
+      - name: Smoke test Docker image
+        if: env.BUILD_DOCKER == 'true' && steps.resolve.outputs.docker_needs_build == 'true' && github.event_name != 'pull_request'
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/syqure-cli
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          docker run --rm "$IMAGE_NAME:$VERSION" syqure example/two_party_sum_simple.codon
 
       - name: Upload Docker artifact
         if: env.BUILD_DOCKER == 'true' && steps.resolve.outputs.docker_needs_build == 'true' && github.event_name != 'pull_request'
@@ -606,6 +626,7 @@ jobs:
           export PYTHON_SHA="${{ steps.resolve.outputs.python_sha }}"
           export DOCKER_SHA="${{ steps.resolve.outputs.docker_sha }}"
           export BUILD_DOCKER="${BUILD_DOCKER:-true}"
+          export BUILD_PYTHON="${BUILD_PYTHON:-true}"
 
           python3 <<'PY'
           import json
@@ -628,7 +649,10 @@ jobs:
           set_artifact("llvm", os.environ["LLVM_SHA"], f"codon-llvm-{platform}-{os.environ['LLVM_SHA']}")
           set_artifact("sequre", os.environ["SEQURE_SHA"], f"sequre-{platform}-{os.environ['SEQURE_SHA']}")
           set_artifact("syqure", os.environ["SYQURE_SHA"], f"syqure-{platform}-{os.environ['SYQURE_SHA']}")
-          set_artifact("python", os.environ["PYTHON_SHA"], f"syqure-python-{platform}-{os.environ['PYTHON_SHA']}")
+          if os.environ.get("BUILD_PYTHON", "true") == "true":
+              set_artifact("python", os.environ["PYTHON_SHA"], f"syqure-python-{platform}-{os.environ['PYTHON_SHA']}")
+          else:
+              plat.setdefault("python", None)
 
           if os.environ.get("BUILD_DOCKER", "true") == "true":
               set_artifact("docker", os.environ["DOCKER_SHA"], f"syqure-cli-{platform}-{os.environ['DOCKER_SHA']}")
@@ -1045,6 +1069,15 @@ jobs:
           mkdir -p "$SYQURE_ARTIFACT_DIR"
           docker save "$IMAGE_NAME:$VERSION" | zstd -19 -o \
             "$SYQURE_ARTIFACT_DIR/syqure-cli-${PLATFORM}-${{ steps.resolve.outputs.docker_sha }}.tar.zst"
+
+      - name: Smoke test Docker image
+        if: env.BUILD_DOCKER == 'true' && steps.resolve.outputs.docker_needs_build == 'true' && github.event_name != 'pull_request'
+        env:
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/syqure-cli
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          docker run --rm "$IMAGE_NAME:$VERSION" syqure example/two_party_sum_simple.codon
 
       - name: Upload Docker artifact
         if: env.BUILD_DOCKER == 'true' && steps.resolve.outputs.docker_needs_build == 'true' && github.event_name != 'pull_request'
