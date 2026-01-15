@@ -46,6 +46,113 @@ private:
   bool restored_;
 };
 
+// RAII helper to capture stdout/stderr to strings
+class OutputCapture {
+public:
+  OutputCapture() : stdout_pipe_{-1, -1}, stderr_pipe_{-1, -1},
+                    saved_stdout_(-1), saved_stderr_(-1), capturing_(false) {}
+
+  ~OutputCapture() { stop(); }
+
+  bool start() {
+    if (capturing_) return true;
+
+    // Create pipes for stdout and stderr
+    if (pipe(stdout_pipe_) < 0) return false;
+    if (pipe(stderr_pipe_) < 0) {
+      close(stdout_pipe_[0]);
+      close(stdout_pipe_[1]);
+      return false;
+    }
+
+    // Set read ends to non-blocking
+    fcntl(stdout_pipe_[0], F_SETFL, O_NONBLOCK);
+    fcntl(stderr_pipe_[0], F_SETFL, O_NONBLOCK);
+
+    // Save original fds
+    fflush(stdout);
+    fflush(stderr);
+    saved_stdout_ = dup(STDOUT_FILENO);
+    saved_stderr_ = dup(STDERR_FILENO);
+
+    // Redirect stdout/stderr to pipes
+    dup2(stdout_pipe_[1], STDOUT_FILENO);
+    dup2(stderr_pipe_[1], STDERR_FILENO);
+
+    capturing_ = true;
+    return true;
+  }
+
+  void stop() {
+    if (!capturing_) return;
+
+    // Flush before restoring
+    fflush(stdout);
+    fflush(stderr);
+
+    // Restore original fds
+    if (saved_stdout_ >= 0) {
+      dup2(saved_stdout_, STDOUT_FILENO);
+      close(saved_stdout_);
+      saved_stdout_ = -1;
+    }
+    if (saved_stderr_ >= 0) {
+      dup2(saved_stderr_, STDERR_FILENO);
+      close(saved_stderr_);
+      saved_stderr_ = -1;
+    }
+
+    // Close write ends
+    if (stdout_pipe_[1] >= 0) {
+      close(stdout_pipe_[1]);
+      stdout_pipe_[1] = -1;
+    }
+    if (stderr_pipe_[1] >= 0) {
+      close(stderr_pipe_[1]);
+      stderr_pipe_[1] = -1;
+    }
+
+    // Read captured output
+    stdout_output_ = readPipe(stdout_pipe_[0]);
+    stderr_output_ = readPipe(stderr_pipe_[0]);
+
+    // Close read ends
+    if (stdout_pipe_[0] >= 0) {
+      close(stdout_pipe_[0]);
+      stdout_pipe_[0] = -1;
+    }
+    if (stderr_pipe_[0] >= 0) {
+      close(stderr_pipe_[0]);
+      stderr_pipe_[0] = -1;
+    }
+
+    capturing_ = false;
+  }
+
+  const std::string& getStdout() const { return stdout_output_; }
+  const std::string& getStderr() const { return stderr_output_; }
+
+private:
+  std::string readPipe(int fd) {
+    std::string result;
+    if (fd < 0) return result;
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof(buf))) > 0) {
+      result.append(buf, n);
+    }
+    return result;
+  }
+
+  int stdout_pipe_[2];
+  int stderr_pipe_[2];
+  int saved_stdout_;
+  int saved_stderr_;
+  bool capturing_;
+  std::string stdout_output_;
+  std::string stderr_output_;
+};
+
 namespace {
 std::string errorToString(llvm::Error err) {
   std::string output;
@@ -84,10 +191,13 @@ codon::Compiler::Mode toMode(bool release) {
   return release ? codon::Compiler::Mode::RELEASE : codon::Compiler::Mode::DEBUG;
 }
 
-SyBuildResult makeError(const std::string &msg) {
+SyBuildResult makeError(const std::string &msg, const std::string &stdout_out = "",
+                        const std::string &stderr_out = "") {
   SyBuildResult res{};
   res.status = 1;
   res.error = msg;
+  res.stdout_output = stdout_out;
+  res.stderr_output = stderr_out;
   return res;
 }
 } // namespace
@@ -133,10 +243,20 @@ SyBuildResult sy_codon_run(const SyCompileOpts &opts,
   for (const auto &lib : opts.libs)
     libs.emplace_back(std::string(lib.data(), lib.size()));
 
-  // Restore stderr before running so program output is visible
+  // Restore stderr before running so compiler warnings are visible if not quiet
   suppressor.restore();
+
+  // Capture stdout/stderr from the JIT-executed program
+  OutputCapture capture;
+  capture.start();
+
   compiler->getLLVMVisitor()->run(args, libs);
+
+  capture.stop();
+
   res.status = 0;
+  res.stdout_output = capture.getStdout();
+  res.stderr_output = capture.getStderr();
   return res;
 }
 
@@ -179,6 +299,8 @@ SyBuildResult sy_codon_build_exe(const SyCompileOpts &opts, rust::Str output) {
       std::string(opts.linker_flags.data(), opts.linker_flags.size()));
   res.status = 0;
   res.output_path = std::string(output.data(), output.size());
+  res.stdout_output = "";
+  res.stderr_output = "";
   return res;
 }
 

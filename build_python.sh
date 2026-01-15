@@ -77,16 +77,23 @@ setup_bundle() {
 
 # 3) Build wheel
 build_wheel() {
-    cd "$ROOT_DIR"
+    cd "$ROOT_DIR/python"
 
     if [ "$DEV_MODE" = true ]; then
         echo "==> Development install (maturin develop)"
-        maturin develop --manifest-path python/Cargo.toml
+        maturin develop
     else
         echo "==> Building release wheel"
-        maturin build --release --manifest-path python/Cargo.toml
-        echo "==> Wheel(s) available under target/wheels"
+        maturin build --release
+        WHEEL=$(ls -t "$ROOT_DIR/target/wheels/"*.whl 2>/dev/null | head -1)
+        if [ -n "$WHEEL" ]; then
+            echo "==> Wheel built: $WHEEL"
+        else
+            echo "==> Wheel(s) available under target/wheels"
+        fi
     fi
+
+    cd "$ROOT_DIR"
 }
 
 # 4) Run tests

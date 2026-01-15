@@ -2,8 +2,31 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use std::path::Path;
+
 use ::syqure as core;
-use core::{bundle, CompileOptions, Syqure};
+use core::{analyze_file, bundle, CompileOptions, RunResult, Syqure};
+
+/// Print captured output to Python's stdout/stderr so it appears in Jupyter cells
+fn print_captured_output(py: Python<'_>, result: &RunResult) -> PyResult<()> {
+    let builtins = py.import_bound("builtins")?;
+    let print_fn = builtins.getattr("print")?;
+
+    if !result.stdout.is_empty() {
+        // Use print with end="" to avoid extra newline since output already has newlines
+        print_fn.call1((&result.stdout,))?;
+    }
+    if !result.stderr.is_empty() {
+        let sys = py.import_bound("sys")?;
+        let stderr = sys.getattr("stderr")?;
+        // Print to stderr using file= parameter
+        let kwargs = PyDict::new_bound(py);
+        kwargs.set_item("file", stderr)?;
+        kwargs.set_item("end", "")?;
+        print_fn.call((&result.stderr,), Some(&kwargs))?;
+    }
+    Ok(())
+}
 
 fn map_err(err: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(err.to_string())
@@ -167,39 +190,35 @@ impl PySyqure {
         }
     }
 
-    fn compile_and_run(&self, source: String) -> PyResult<()> {
-        self.inner
-            .compile_and_maybe_run(&source)
-            .map(|_| ())
-            .map_err(map_err)
+    fn compile_and_run(&self, py: Python<'_>, source: String) -> PyResult<()> {
+        let result = self.inner.compile_and_maybe_run(&source).map_err(map_err)?;
+        print_captured_output(py, &result)?;
+        Ok(())
     }
 
-    fn compile(&self, source: String) -> PyResult<Option<String>> {
-        self.inner
-            .compile_and_maybe_run(&source)
-            .map(|opt| opt.map(|p| p.to_string_lossy().into_owned()))
-            .map_err(map_err)
+    fn compile(&self, py: Python<'_>, source: String) -> PyResult<Option<String>> {
+        let result = self.inner.compile_and_maybe_run(&source).map_err(map_err)?;
+        print_captured_output(py, &result)?;
+        Ok(result.output_path.map(|p| p.to_string_lossy().into_owned()))
     }
 }
 
 #[pyfunction]
-fn compile_and_run(source: String, opts: Option<PyCompileOptions>) -> PyResult<()> {
+fn compile_and_run(py: Python<'_>, source: String, opts: Option<PyCompileOptions>) -> PyResult<()> {
     let options = opts.map(|o| o.inner).unwrap_or_default();
     let syqure = Syqure::new(options);
-    syqure
-        .compile_and_maybe_run(&source)
-        .map(|_| ())
-        .map_err(map_err)
+    let result = syqure.compile_and_maybe_run(&source).map_err(map_err)?;
+    print_captured_output(py, &result)?;
+    Ok(())
 }
 
 #[pyfunction]
-fn compile(source: String, opts: Option<PyCompileOptions>) -> PyResult<Option<String>> {
+fn compile(py: Python<'_>, source: String, opts: Option<PyCompileOptions>) -> PyResult<Option<String>> {
     let options = opts.map(|o| o.inner).unwrap_or_default();
     let syqure = Syqure::new(options);
-    syqure
-        .compile_and_maybe_run(&source)
-        .map(|opt| opt.map(|p| p.to_string_lossy().into_owned()))
-        .map_err(map_err)
+    let result = syqure.compile_and_maybe_run(&source).map_err(map_err)?;
+    print_captured_output(py, &result)?;
+    Ok(result.output_path.map(|p| p.to_string_lossy().into_owned()))
 }
 
 /// Returns the version string
@@ -211,7 +230,7 @@ fn version() -> String {
 /// Returns detailed build and system information as a dictionary
 #[pyfunction]
 fn info(py: Python<'_>) -> PyResult<Py<PyDict>> {
-    let dict = PyDict::new(py);
+    let dict = PyDict::new_bound(py);
 
     // Version info
     dict.set_item("version", env!("CARGO_PKG_VERSION"))?;
@@ -274,13 +293,58 @@ fn info(py: Python<'_>) -> PyResult<Py<PyDict>> {
     }
 
     // Environment variables
-    let env_dict = PyDict::new(py);
+    let env_dict = PyDict::new_bound(py);
     for var in ["CODON_PATH", "SYQURE_BUNDLE_CACHE", "DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"] {
         if let Ok(val) = std::env::var(var) {
             env_dict.set_item(var, val)?;
         }
     }
     dict.set_item("environment", env_dict)?;
+
+    Ok(dict.into())
+}
+
+/// Analyze a .codon file and return cost estimation as a dictionary
+#[pyfunction]
+fn analyze(py: Python<'_>, source: String) -> PyResult<Py<PyDict>> {
+    let path = Path::new(&source);
+    let analysis = analyze_file(path).map_err(map_err)?;
+
+    let dict = PyDict::new_bound(py);
+    dict.set_item("file", &analysis.file)?;
+    dict.set_item("path", &analysis.path)?;
+
+    // Types
+    let types = PyDict::new_bound(py);
+    types.set_item("sharetensor", analysis.types.sharetensor)?;
+    types.set_item("ciphertensor", analysis.types.ciphertensor)?;
+    types.set_item("mpu", analysis.types.mpu)?;
+    types.set_item("mpp", analysis.types.mpp)?;
+    types.set_item("mpa", analysis.types.mpa)?;
+    dict.set_item("types", types)?;
+
+    // Operations
+    let ops = PyDict::new_bound(py);
+    ops.set_item("matmul", analysis.operations.matmul)?;
+    ops.set_item("encrypt", analysis.operations.encrypt)?;
+    ops.set_item("decrypt", analysis.operations.decrypt)?;
+    dict.set_item("operations", ops)?;
+
+    // Runtime
+    let runtime = PyDict::new_bound(py);
+    runtime.set_item("needs_mhe", analysis.runtime.needs_mhe)?;
+    runtime.set_item("can_skip_mhe", analysis.runtime.can_skip_mhe)?;
+    runtime.set_item("uses_local", analysis.runtime.uses_local)?;
+    dict.set_item("runtime", runtime)?;
+
+    // Estimate
+    let estimate = PyDict::new_bound(py);
+    estimate.set_item("jit_seconds", analysis.estimate.jit_seconds)?;
+    estimate.set_item("mhe_seconds", analysis.estimate.mhe_seconds)?;
+    estimate.set_item("mpc_seconds", analysis.estimate.mpc_seconds)?;
+    estimate.set_item("ops_seconds", analysis.estimate.ops_seconds)?;
+    estimate.set_item("total_seconds", analysis.estimate.total_seconds)?;
+    dict.set_item("estimate", estimate)?;
 
     Ok(dict.into())
 }
@@ -292,6 +356,7 @@ fn syqure(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(compile_and_run, m)?)?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(info, m)?)?;
 

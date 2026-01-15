@@ -1,0 +1,20 @@
+# Build artifacts
+syqure/syqure.abi3.so
+syqure/*.so
+syqure/*.pyd
+
+# Extracted bundle contents
+syqure/bin/
+syqure/lib/
+syqure/include/
+
+# Python cache
+syqure/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+
+# Maturin/Cargo artifacts
+target/
+*.egg-info/
+dist/

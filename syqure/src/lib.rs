@@ -4,4 +4,4 @@ pub mod ffi;
 pub mod runner;
 
 pub use analyze::{analyze_file, Analysis};
-pub use runner::{CompileOptions, Syqure};
+pub use runner::{CompileOptions, RunResult, Syqure};

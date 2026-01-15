@@ -19,6 +19,10 @@ mod bridge {
         status: i32,
         output_path: String,
         error: String,
+        /// Captured stdout from the program execution.
+        stdout_output: String,
+        /// Captured stderr from the program execution.
+        stderr_output: String,
     }
 
     unsafe extern "C++" {
