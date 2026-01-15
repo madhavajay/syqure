@@ -1,21 +1,24 @@
 # Re-export everything from the Rust extension module
 from .syqure import (
-    Syqure,
     CompileOptions,
+    Syqure,
+    __doc__,
+    __version__,
+    analyze,
     compile,
     compile_and_run,
-    version,
     info,
-    __version__,
-    __doc__,
+    version,
 )
 
 __all__ = [
-    "Syqure",
     "CompileOptions",
+    "Syqure",
+    "__doc__",
+    "__version__",
+    "analyze",
     "compile",
     "compile_and_run",
-    "version",
     "info",
-    "__version__",
+    "version",
 ]

@@ -101,40 +101,78 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            manylinux: auto
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            manylinux: auto
           - os: macos-latest
             target: aarch64-apple-darwin
+            bundle_triple: aarch64-apple-darwin
             manylinux: off
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            manylinux: off
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            manylinux: off
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundle_triple: x86_64-unknown-linux-gnu
+            manylinux: auto
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
+          submodules: recursive
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
+      - name: Check for existing bundle
+        id: bundle
+        run: |
+          BUNDLE="syqure/bundles/${{ matrix.bundle_triple }}.tar.zst"
+          if [ -f "$BUNDLE" ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "path=$(pwd)/$BUNDLE" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "Bundle not found at $BUNDLE - wheel will not include libs" >&2
+          fi
+
+      - name: Install build deps (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd wget lsb-release software-properties-common gnupg libgmp-dev
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-17 main" | \
+            sudo tee /etc/apt/sources.list.d/llvm-17.list
+          sudo apt-get update
+          sudo apt-get install -y llvm-17-dev
+
+      - name: Install build deps (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew update
+          brew install llvm@17 gmp fmt zstd
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          SYQURE_BUNDLE_FILE: ${{ steps.bundle.outputs.path }}
         with:
           working-directory: python
           target: ${{ matrix.target }}
           args: --release --out dist
           sccache: "true"
           manylinux: ${{ matrix.manylinux }}
+
+      - name: Smoke test wheel (macOS)
+        if: matrix.os == 'macos-latest' && steps.bundle.outputs.found == 'true'
+        run: |
+          pip install python/dist/*.whl
+          python -c "
+          import syqure
+          print('Version:', syqure.version())
+          info = syqure.info()
+          print('Codon path:', info.get('codon_path'))
+          assert 'codon_path' in info, 'Bundle not extracted properly'
+          print('Wheel smoke test passed!')
+          "
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4

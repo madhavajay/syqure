@@ -66,89 +66,97 @@ jobs:
           echo "$OUT" | grep "CP1: my input = 5, sum = 14"
           echo "$OUT" | grep "CP2: my input = 9, sum = 14"
 
+  python-smoke:
+    name: Python Wheel Smoke Test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Check for existing bundle
+        id: bundle
+        run: |
+          TRIPLE="$(rustc -vV | grep host: | awk '{print $2}')"
+          BUNDLE="syqure/bundles/${TRIPLE}.tar.zst"
+          if [ -f "$BUNDLE" ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "path=$BUNDLE" >> $GITHUB_OUTPUT
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Python wheel (with bundle)
+        if: steps.bundle.outputs.found == 'true'
+        env:
+          SYQURE_BUNDLE_FILE: ${{ github.workspace }}/${{ steps.bundle.outputs.path }}
+        run: |
+          cd python
+          uv venv ../.venv-test
+          source ../.venv-test/bin/activate
+          uv pip install maturin
+          maturin build --release
+          uv pip install ../target/wheels/syqure-*.whl
+
+      - name: Smoke test Python import
+        if: steps.bundle.outputs.found == 'true'
+        run: |
+          source .venv-test/bin/activate
+          python -c "
+          import syqure
+          print('Version:', syqure.version())
+          info = syqure.info()
+          print('Target:', info.get('target'))
+          print('Codon path:', info.get('codon_path'))
+          assert 'codon_path' in info, 'Bundle not extracted'
+          print('Python smoke test passed!')
+          "
+
+      - name: Test compile_and_run
+        if: steps.bundle.outputs.found == 'true'
+        run: |
+          source .venv-test/bin/activate
+          echo 'print("Hello from Codon!")' > /tmp/test.codon
+          python -c "
+          import syqure
+          syqure.compile_and_run('/tmp/test.codon')
+          "
+
+      - name: Test analyze
+        if: steps.bundle.outputs.found == 'true'
+        run: |
+          source .venv-test/bin/activate
+          cat > /tmp/mpc_test.codon << 'EOF'
+          from sequre import Sharetensor
+          x = Sharetensor.enc(mpc, 42)
+          result = x.reveal(mpc)
+          EOF
+          python -c "
+          import syqure
+          analysis = syqure.analyze('/tmp/mpc_test.codon')
+          assert analysis['types']['sharetensor'] == True, 'Should detect Sharetensor'
+          assert analysis['runtime']['can_skip_mhe'] == True, 'MPC-only should allow skip MHE'
+          print('Analyze test passed!')
+          print('  Sharetensor:', analysis['types']['sharetensor'])
+          print('  Can skip MHE:', analysis['runtime']['can_skip_mhe'])
+          "
+
   python-lint:
     name: Python Lint
     runs-on: ubuntu-latest
-    if: false  # temporarily disabled
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: false
-
-      - name: Run lint script
-        run: ./lint.sh
-
-  python-build:
-    name: Python Build
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os != 'macos-latest' }}
-    if: false  # temporarily disabled
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: false
-
-      - name: Build extension and smoke import
-        run: |
-          uv venv
-          uv pip install maturin
-          uv run -- maturin develop --manifest-path bindings/python/Cargo.toml
-          uv run python -c "import syft_crypto_python as syc; mat = syc.generate_identity_material('ci@example.com'); assert mat.fingerprint"
-
-  python-wheel-aarch64:
-    name: Python Wheel aarch64
-    runs-on: ubuntu-24.04-arm
-    if: false  # temporarily disabled
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v2
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -157,12 +165,13 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: false
 
-      - name: Build aarch64 wheel (smoke)
+      - name: Run Python lint
         run: |
-          uv venv
-          uv pip install maturin
-          uv run -- maturin build --release --target aarch64-unknown-linux-gnu --manifest-path bindings/python/Cargo.toml --out dist
-          ls -l dist/*.whl
+          uv venv .venv-lint
+          source .venv-lint/bin/activate
+          uv pip install ruff
+          cd python
+          ruff check syqure/
+          ruff format --check syqure/
+
