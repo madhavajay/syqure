@@ -563,11 +563,23 @@ jobs:
             tar czf syqure-${{ matrix.target }}.tar.gz -C "$RELEASE_DIR" .
           fi
 
+      - name: Create self-extracting installer
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          VERSION="${{ needs.check-version.outputs.new_version }}"
+          ./scripts/create_installer.sh \
+            "syqure-${{ matrix.target }}.tar.gz" \
+            "syqure-${{ matrix.target }}-installer" \
+            "$VERSION"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: syqure-${{ matrix.target }}
-          path: syqure-${{ matrix.target }}.*
+          path: |
+            syqure-${{ matrix.target }}.*
+            syqure-${{ matrix.target }}-installer
 
   build-docker:
     name: Build Docker image (linux-x86_64)
@@ -791,15 +803,40 @@ jobs:
           cat > "$NOTES_FILE" <<EOF
           # Syqure v${{ steps.version.outputs.version }}
 
-          Rust harness for Codon + Sequre (builds the `syqure` CLI + library).
+          Rust harness for Codon + Sequre (builds the \`syqure\` CLI + library).
+
+          ## Quick Install (Recommended)
+
+          Download the self-extracting installer for your platform:
+
+          **macOS (Apple Silicon):**
+          \`\`\`bash
+          curl -LO https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/syqure-aarch64-apple-darwin-installer
+          chmod +x syqure-aarch64-apple-darwin-installer
+          ./syqure-aarch64-apple-darwin-installer --add-to-path
+          \`\`\`
+
+          **Linux (x86_64):**
+          \`\`\`bash
+          curl -LO https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/syqure-x86_64-unknown-linux-gnu-installer
+          chmod +x syqure-x86_64-unknown-linux-gnu-installer
+          ./syqure-x86_64-unknown-linux-gnu-installer --add-to-path
+          \`\`\`
+
+          The installer extracts to \`~/.local/syqure/${{ steps.version.outputs.version }}/\` and can be run directly or added to your PATH.
+
+          ## Manual Install
+
+          Download the tarball and extract manually:
+          \`\`\`bash
+          tar xzf syqure-<platform>.tar.gz
+          ./syqure --help
+          \`\`\`
 
           ## Build from source
           \`\`\`bash
           cargo build --release -p syqure
           \`\`\`
-
-          ## Binaries
-          Download the appropriate binary for your platform from the assets below.
 
           ## Docker
           \`\`\`bash
@@ -816,12 +853,21 @@ jobs:
       - name: Upload Release Assets
         run: |
           shopt -s globstar nullglob
-          # Only upload binary archives (.tar.gz, .zip), not pipeline artifacts (.tar.zst)
+          # Upload binary archives (.tar.gz, .zip) and self-extracting installers
           for file in artifacts/**/*.{tar.gz,zip}; do
             asset_name=$(basename "$file")
             echo "Uploading $asset_name"
             gh release upload v${{ steps.version.outputs.version }} "$file" \
               --repo ${{ github.repository }}
+          done
+          # Upload self-extracting installers (files ending in -installer)
+          for file in artifacts/**/*-installer; do
+            if [[ -f "$file" ]]; then
+              asset_name=$(basename "$file")
+              echo "Uploading $asset_name"
+              gh release upload v${{ steps.version.outputs.version }} "$file" \
+                --repo ${{ github.repository }}
+            fi
           done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

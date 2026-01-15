@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::env;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -133,8 +135,17 @@ fn main() {
             "-Wl,-rpath,@loader_path/lib/codon"
         } else {
             "-Wl,-rpath,$ORIGIN/lib/codon"
-        })
-        .compile("syqure-ffi");
+        });
+
+    // For self-contained binaries: add rpath to the expected cache extraction path.
+    // This allows the single binary to find libs after extracting its embedded bundle.
+    if !runtime_bundle {
+        if let Some(cache_rpath) = compute_cache_rpath() {
+            bridge.flag_if_supported(&cache_rpath);
+        }
+    }
+
+    bridge.compile("syqure-ffi");
 
     // Re-run build script if any of these files change.
     println!("cargo:rerun-if-changed=src/ffi.rs");
@@ -161,10 +172,7 @@ fn set_bundle_env() {
             "cargo:rustc-env=SYQURE_BUNDLE_FILE={}",
             val.to_string_lossy()
         );
-        println!(
-            "cargo:rerun-if-changed={}",
-            val.to_string_lossy()
-        );
+        println!("cargo:rerun-if-changed={}", val.to_string_lossy());
         return;
     }
     if let Some(root) = repo_root() {
@@ -355,7 +363,11 @@ fn llvm_config_path(bundle_root: &Option<PathBuf>) -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    if Command::new("llvm-config").arg("--version").output().is_ok() {
+    if Command::new("llvm-config")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
         return Some(PathBuf::from("llvm-config"));
     }
     None
@@ -406,4 +418,32 @@ fn run_llvm_config_raw(llvm_config: &Path, args: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Compute and emit the expected cache extraction path for self-contained binaries.
+/// This path is embedded as an env var for runtime use (e.g., setting LD_LIBRARY_PATH).
+fn compute_cache_rpath() -> Option<String> {
+    let bundle_path = env::var("SYQURE_BUNDLE_FILE").ok()?;
+    let bundle_bytes = std::fs::read(&bundle_path).ok()?;
+
+    // Compute hash (must match bundle.rs algorithm)
+    let mut hasher = DefaultHasher::new();
+    bundle_bytes.hash(&mut hasher);
+    let hash = format!("{:x}-{}", hasher.finish(), bundle_bytes.len());
+
+    // Get bundle name from path
+    let bundle_name = Path::new(&bundle_path)
+        .file_name()
+        .and_then(|s| s.to_str())?
+        .to_string();
+
+    // Emit the cache lib path for runtime use
+    // Note: rpath doesn't support $HOME expansion, so this is for informational/wrapper use
+    println!(
+        "cargo:rustc-env=SYQURE_CACHE_LIB_PATH={}/{}/lib/codon",
+        bundle_name, hash
+    );
+
+    // Cannot add to rpath (no $HOME expansion), return None
+    None
 }
