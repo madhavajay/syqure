@@ -147,6 +147,11 @@ fn main() {
 
     bridge.compile("syqure-ffi");
 
+    // Expose TARGET for runtime info
+    if let Ok(target) = env::var("TARGET") {
+        println!("cargo:rustc-env=TARGET={}", target);
+    }
+
     // Re-run build script if any of these files change.
     println!("cargo:rerun-if-changed=src/ffi.rs");
     println!("cargo:rerun-if-changed=src/ffi/bridge.cc");

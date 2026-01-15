@@ -2,10 +2,12 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use syqure::{analyze_file, analyze, CompileOptions, Syqure};
+use syqure::{analyze_file, analyze, bundle, CompileOptions, Syqure};
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Parser, Debug)]
-#[command(name = "syqure", about = "Compile and run Codon/Sequre programs")]
+#[command(name = "syqure", version = VERSION, about = "Compile and run Codon/Sequre programs")]
 struct Args {
     #[command(subcommand)]
     command: Option<Command>,
@@ -54,6 +56,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Show build and system information for debugging
+    Info,
 }
 
 fn main() -> Result<()> {
@@ -70,6 +74,9 @@ fn main() -> Result<()> {
         }
         Some(Command::Run { source }) => {
             run_source(&args, source)?;
+        }
+        Some(Command::Info) => {
+            print_info();
         }
         None => {
             // Default behavior: if source is provided without subcommand, run it
@@ -109,4 +116,87 @@ fn run_source(args: &Args, source: &PathBuf) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_info() {
+    println!("syqure {}", VERSION);
+    println!();
+
+    // Build info
+    println!("Build Information:");
+    println!("  Version:      {}", VERSION);
+    println!("  Target:       {}", env!("TARGET"));
+    println!("  Profile:      {}", if cfg!(debug_assertions) { "debug" } else { "release" });
+
+    // Compile-time info from build.rs (if available)
+    if let Some(cache_path) = option_env!("SYQURE_CACHE_LIB_PATH") {
+        println!("  Cache path:   ~/.cache/syqure/{}", cache_path);
+    }
+    println!();
+
+    // System info
+    println!("System Information:");
+    println!("  OS:           {}", std::env::consts::OS);
+    println!("  Arch:         {}", std::env::consts::ARCH);
+    if let Ok(exe) = std::env::current_exe() {
+        println!("  Executable:   {}", exe.display());
+    }
+    println!();
+
+    // Bundle/library info
+    println!("Library Information:");
+    match bundle::ensure_bundle() {
+        Ok(codon_path) => {
+            println!("  Codon path:   {}", codon_path.display());
+            if let Some(parent) = codon_path.parent() {
+                println!("  Cache dir:    {}", parent.display());
+            }
+
+            // List libraries
+            if codon_path.exists() {
+                println!("  Libraries:");
+                if let Ok(entries) = std::fs::read_dir(&codon_path) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(name) = path.file_name() {
+                            let name_str = name.to_string_lossy();
+                            if name_str.ends_with(".dylib") || name_str.ends_with(".so") {
+                                if let Ok(meta) = std::fs::metadata(&path) {
+                                    let size_kb = meta.len() / 1024;
+                                    println!("    {} ({} KB)", name_str, size_kb);
+                                } else {
+                                    println!("    {}", name_str);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Check plugins
+                let plugins_dir = codon_path.join("plugins");
+                if plugins_dir.exists() {
+                    println!("  Plugins:");
+                    if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
+                        for entry in entries.flatten() {
+                            if entry.path().is_dir() {
+                                println!("    {}", entry.file_name().to_string_lossy());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            println!("  Error: {}", e);
+        }
+    }
+    println!();
+
+    // Environment variables
+    println!("Environment:");
+    for var in ["CODON_PATH", "SYQURE_BUNDLE_CACHE", "DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"] {
+        if let Ok(val) = std::env::var(var) {
+            println!("  {}={}", var, val);
+        }
+    }
 }
