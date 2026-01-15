@@ -1,8 +1,9 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use ::syqure as core;
-use core::{CompileOptions, Syqure};
+use core::{bundle, CompileOptions, Syqure};
 
 fn map_err(err: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(err.to_string())
@@ -201,6 +202,89 @@ fn compile(source: String, opts: Option<PyCompileOptions>) -> PyResult<Option<St
         .map_err(map_err)
 }
 
+/// Returns the version string
+#[pyfunction]
+fn version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Returns detailed build and system information as a dictionary
+#[pyfunction]
+fn info(py: Python<'_>) -> PyResult<Py<PyDict>> {
+    let dict = PyDict::new(py);
+
+    // Version info
+    dict.set_item("version", env!("CARGO_PKG_VERSION"))?;
+    dict.set_item("target", env!("TARGET"))?;
+    dict.set_item(
+        "profile",
+        if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
+    )?;
+
+    // System info
+    dict.set_item("os", std::env::consts::OS)?;
+    dict.set_item("arch", std::env::consts::ARCH)?;
+
+    // Bundle/library info
+    match bundle::ensure_bundle() {
+        Ok(codon_path) => {
+            dict.set_item("codon_path", codon_path.to_string_lossy().to_string())?;
+            if let Some(parent) = codon_path.parent() {
+                dict.set_item("cache_dir", parent.to_string_lossy().to_string())?;
+            }
+
+            // List libraries
+            let mut libs = Vec::new();
+            if codon_path.exists() {
+                if let Ok(entries) = std::fs::read_dir(&codon_path) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(name) = path.file_name() {
+                            let name_str = name.to_string_lossy();
+                            if name_str.ends_with(".dylib") || name_str.ends_with(".so") {
+                                libs.push(name_str.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            dict.set_item("libraries", libs)?;
+
+            // List plugins
+            let mut plugins = Vec::new();
+            let plugins_dir = codon_path.join("plugins");
+            if plugins_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            plugins.push(entry.file_name().to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+            dict.set_item("plugins", plugins)?;
+        }
+        Err(e) => {
+            dict.set_item("bundle_error", e.to_string())?;
+        }
+    }
+
+    // Environment variables
+    let env_dict = PyDict::new(py);
+    for var in ["CODON_PATH", "SYQURE_BUNDLE_CACHE", "DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"] {
+        if let Ok(val) = std::env::var(var) {
+            env_dict.set_item(var, val)?;
+        }
+    }
+    dict.set_item("environment", env_dict)?;
+
+    Ok(dict.into())
+}
+
 #[pymodule]
 fn syqure(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCompileOptions>()?;
@@ -208,6 +292,8 @@ fn syqure(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(compile_and_run, m)?)?;
     m.add_function(wrap_pyfunction!(compile, m)?)?;
+    m.add_function(wrap_pyfunction!(version, m)?)?;
+    m.add_function(wrap_pyfunction!(info, m)?)?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add(

@@ -26,6 +26,11 @@ fn main() {
         }
     }
 
+    // Expose TARGET for runtime info
+    if let Ok(target) = env::var("TARGET") {
+        println!("cargo:rustc-env=TARGET={}", target);
+    }
+
     // Re-run if bundle changes
     println!("cargo:rerun-if-env-changed=SYQURE_BUNDLE_FILE");
 }
@@ -68,14 +73,15 @@ fn set_bundle_and_unpack() {
         return;
     };
 
-    // Unpack the bundle into python/syqure/lib/ so maturin includes it in the wheel
+    // Unpack the bundle into python/syqure/ so maturin includes it in the wheel
+    // The bundle contains lib/codon/, so extracting to python/syqure/ gives python/syqure/lib/codon/
     if let Some(manifest_dir) = env::var_os("CARGO_MANIFEST_DIR") {
         let python_dir = PathBuf::from(manifest_dir);
-        let lib_dir = python_dir.join("syqure").join("lib");
+        let syqure_dir = python_dir.join("syqure");
 
-        // Create lib directory
-        if let Err(e) = fs::create_dir_all(&lib_dir) {
-            eprintln!("Warning: Failed to create {}: {}", lib_dir.display(), e);
+        // Create syqure directory
+        if let Err(e) = fs::create_dir_all(&syqure_dir) {
+            eprintln!("Warning: Failed to create {}: {}", syqure_dir.display(), e);
             return;
         }
 
@@ -83,7 +89,7 @@ fn set_bundle_and_unpack() {
         println!(
             "cargo:warning=Unpacking bundle {} to {}",
             bundle_file.display(),
-            lib_dir.display()
+            syqure_dir.display()
         );
 
         let status = Command::new("sh")
@@ -91,7 +97,7 @@ fn set_bundle_and_unpack() {
             .arg(format!(
                 "zstd -d -c '{}' | tar -x -C '{}'",
                 bundle_file.display(),
-                lib_dir.display()
+                syqure_dir.display()
             ))
             .status();
 
@@ -99,7 +105,7 @@ fn set_bundle_and_unpack() {
             Ok(s) if s.success() => {
                 println!(
                     "cargo:warning=Successfully unpacked bundle to {}",
-                    lib_dir.display()
+                    syqure_dir.display()
                 );
             }
             Ok(s) => {

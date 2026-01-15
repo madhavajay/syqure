@@ -4,6 +4,8 @@ from .syqure import (
     CompileOptions,
     compile,
     compile_and_run,
+    version,
+    info,
     __version__,
     __doc__,
 )
@@ -13,5 +15,7 @@ __all__ = [
     "CompileOptions",
     "compile",
     "compile_and_run",
+    "version",
+    "info",
     "__version__",
 ]
