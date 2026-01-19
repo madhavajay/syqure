@@ -390,7 +390,8 @@ jobs:
 
           if [ -d "$CODON_PATH" ]; then
             rm -rf "$BIN_DIR/codon"
-            cp -R "$CODON_PATH" "$BIN_DIR/codon"
+            # Dereference symlinks so repo bins contain real files (avoids CI tar -h failures).
+            cp -RL "$CODON_PATH" "$BIN_DIR/codon"
           fi
 
       - name: Smoke test
