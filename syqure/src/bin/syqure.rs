@@ -111,7 +111,17 @@ fn run_source(args: &Args, source: &PathBuf) -> Result<()> {
     opts.program_args = program_args;
 
     let syqure = Syqure::new(opts);
-    if let Some(output) = syqure.compile_and_maybe_run(source)? {
+    let result = syqure.compile_and_maybe_run(source)?;
+
+    // Print captured output
+    if !result.stdout.is_empty() {
+        print!("{}", result.stdout);
+    }
+    if !result.stderr.is_empty() {
+        eprint!("{}", result.stderr);
+    }
+
+    if let Some(output) = result.output_path {
         println!("Built executable at {}", output.display());
     }
 

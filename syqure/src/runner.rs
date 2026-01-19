@@ -40,6 +40,17 @@ impl Default for CompileOptions {
     }
 }
 
+/// Result of compiling and running a Codon program.
+#[derive(Debug, Clone, Default)]
+pub struct RunResult {
+    /// Path to the output binary (only set when run_after_build is false).
+    pub output_path: Option<PathBuf>,
+    /// Captured stdout from the program.
+    pub stdout: String,
+    /// Captured stderr from the program.
+    pub stderr: String,
+}
+
 /// High-level facade for compiling/running Codon sources with Sequre.
 pub struct Syqure {
     opts: CompileOptions,
@@ -51,8 +62,8 @@ impl Syqure {
     }
 
     /// Compile the provided Codon file and optionally run it.
-    /// Returns Ok(Some(path)) when only building, Ok(None) when run completed.
-    pub fn compile_and_maybe_run(&self, source: impl AsRef<Path>) -> Result<Option<PathBuf>> {
+    /// Returns Ok(RunResult) with captured output and optionally the output path.
+    pub fn compile_and_maybe_run(&self, source: impl AsRef<Path>) -> Result<RunResult> {
         let source = source.as_ref();
         if !source.exists() {
             return Err(anyhow!("source file not found: {}", source.display()));
@@ -83,7 +94,11 @@ impl Syqure {
             if result.status != 0 {
                 return Err(anyhow!("codon run failed: {}", result.error));
             }
-            return Ok(None);
+            return Ok(RunResult {
+                output_path: None,
+                stdout: result.stdout_output,
+                stderr: result.stderr_output,
+            });
         }
 
         // Build only.
@@ -95,7 +110,11 @@ impl Syqure {
         if result.status != 0 {
             return Err(anyhow!("codon build failed: {}", result.error));
         }
-        Ok(Some(output))
+        Ok(RunResult {
+            output_path: Some(output),
+            stdout: result.stdout_output,
+            stderr: result.stderr_output,
+        })
     }
 
     fn make_opts(&self, source: &Path, standalone: bool, plugin: String) -> SyCompileOpts {

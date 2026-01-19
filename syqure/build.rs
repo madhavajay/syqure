@@ -6,12 +6,13 @@ use std::process::{Command, Stdio};
 
 fn main() {
     let runtime_bundle = env::var("CARGO_FEATURE_RUNTIME_BUNDLE").is_ok();
-    if !runtime_bundle {
-        set_bundle_env();
+    let bundle_file = if !runtime_bundle {
+        Some(set_bundle_env())
     } else {
         println!("cargo:rerun-if-env-changed=SYQURE_BUNDLE_FILE");
-    }
-    let bundle_root = if runtime_bundle { None } else { bundle_root() };
+        None
+    };
+    let bundle_root = bundle_file.and_then(|f| bundle_root(&f));
 
     // Build the C++ bridge. We keep it minimal for now and allow downstream
     // overrides for include/library paths via env vars.
@@ -20,6 +21,16 @@ fn main() {
     // Allow callers to point at Codon/Sequre headers if needed later.
     if let Ok(include) = env::var("SYQURE_CPP_INCLUDE") {
         bridge.include(include);
+    }
+
+    // Add homebrew include paths for fmt and other dependencies (macOS).
+    if cfg!(target_os = "macos") {
+        for prefix in &["/opt/homebrew", "/usr/local"] {
+            let inc = Path::new(prefix).join("include");
+            if inc.exists() {
+                bridge.include(&inc);
+            }
+        }
     }
     // Prefer headers from the prebuilt bundle if available.
     if let Some(root) = &bundle_root {
@@ -171,14 +182,15 @@ fn repo_root() -> Option<std::path::PathBuf> {
         .map(|p| p.to_path_buf())
 }
 
-fn set_bundle_env() {
+fn set_bundle_env() -> PathBuf {
     if let Some(val) = env::var_os("SYQURE_BUNDLE_FILE") {
+        let path = PathBuf::from(&val);
         println!(
             "cargo:rustc-env=SYQURE_BUNDLE_FILE={}",
             val.to_string_lossy()
         );
         println!("cargo:rerun-if-changed={}", val.to_string_lossy());
-        return;
+        return path;
     }
     if let Some(root) = repo_root() {
         if let Ok(triple) = env::var("TARGET") {
@@ -188,7 +200,7 @@ fn set_bundle_env() {
             if candidate.exists() {
                 println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", candidate.display());
                 println!("cargo:rerun-if-changed={}", candidate.display());
-                return;
+                return candidate;
             }
             // Fallback: if we have a local codon install, package it into OUT_DIR.
             let codon_lib = root.join("codon/install/lib/codon");
@@ -206,7 +218,7 @@ fn set_bundle_env() {
                     .unwrap();
                 if status.success() {
                     println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", out.display());
-                    return;
+                    return out;
                 }
             }
         }
@@ -217,8 +229,7 @@ fn set_bundle_env() {
     );
 }
 
-fn bundle_root() -> Option<PathBuf> {
-    let bundle = env::var("SYQURE_BUNDLE_FILE").ok()?;
+fn bundle_root(bundle: &Path) -> Option<PathBuf> {
     let out_dir = env::var("OUT_DIR").ok()?;
     let extract_dir = Path::new(&out_dir).join("bundle");
 
@@ -248,7 +259,7 @@ fn bundle_root() -> Option<PathBuf> {
     if !tar_status.success() {
         panic!(
             "failed to extract bundle {} into {}",
-            bundle,
+            bundle.display(),
             extract_dir.display()
         );
     }
