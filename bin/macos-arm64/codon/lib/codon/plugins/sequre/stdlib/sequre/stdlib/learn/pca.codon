@@ -1,0 +1,136 @@
+""" Principal component analysis module """
+from time import timing
+
+from numpy.create import zeros, array
+
+from sequre.attributes import sequre
+from sequre.stdlib.lin_alg import orthonormalize, eigen_decomp, householder
+from sequre.utils.utils import random_ints
+
+
+class RandomSketching:
+    @sequre
+    def iterative(mpc, data, miss, data_mean, top_components_count, oversampling_count):
+        kp = top_components_count + oversampling_count
+        sketch = data.zeros((kp, len(data_mean)))
+        sketch_adjustment = data_mean.zeros((kp, len(data_mean)))
+        bucket_count = zeros((kp,), dtype=int)
+
+        for data_row, miss_row in zip(data, miss):
+            with mpc.randomness.seed_switch(-1):
+                bucket_index = kp.rand(kp, "uniform") - 1
+                rand_sign = (kp.rand(2, "uniform") - 1) * 2 - 1
+
+            # Flip miss bits so it points to places where g_mean should be subtracted
+            flip_miss = (1 - miss_row)
+            if rand_sign == -1:
+                flip_miss = -flip_miss
+                sketch[bucket_index] -= data_row
+            else:
+                sketch[bucket_index] += data_row
+            
+            sketch_adjustment[bucket_index] += flip_miss * data_mean
+            bucket_count[bucket_index] += 1
+
+        # Subtract the adjustment factor
+        sketch = sketch.to_fp() - sketch_adjustment
+
+        # Get rid of empty buckets and normalize nonempty ones. Loop will be removed after #49 is fixed.
+        for i, bc in enumerate(bucket_count): sketch[i] /= bc
+        sketch = sketch.filter(bucket_count)
+
+        print(f"CP{mpc.pid}:\tPCA Initial sketch obtained.")
+        return sketch
+
+    @sequre
+    def vectorized(mpc, data, sketch_size):
+        sketch_matrix = RandomSketching.generate_sketch_matrix((sketch_size, len(data)))
+        return sketch_matrix @ data
+    
+    def generate_sketch_matrix(shape):
+        sketch_matrix = array(random_ints(shape, upper_limit=1))
+        return sketch_matrix / sketch_matrix.sum(axis=1).expand_dims(axis=1)
+
+
+class PowersStep:
+    @sequre
+    def with_lazy_norm(mpc, pca_sketch, data, miss, data_mean, data_std_inv, iterations_count):
+        Q = orthonormalize(mpc, pca_sketch * data_std_inv)
+        hit = (1 - miss).astype(float)
+
+        for pit in range(iterations_count + 1):
+            Q_scaled = Q * data_std_inv
+            Q_scaled_gmean = Q_scaled * data_mean
+
+            Q = data.astype(float) @ Q_scaled.T - hit @ Q_scaled_gmean.T
+            if pit == iterations_count: break
+            print(f"CP{mpc.pid}:\tPCA powers iteration {pit + 1}/{iterations_count} ...")
+
+            ortho_Q = orthonormalize(mpc, Q.T)
+            Q = orthonormalize(mpc, (ortho_Q @ data.astype(float) - ortho_Q @ hit * data_mean) * data_std_inv)
+
+        return Q
+
+    @sequre
+    def without_norm(mpc, pca_sketch, data, iterations_count):
+        for pit in range(iterations_count):
+            print(f"CP{mpc.pid}:\tPCA powers iteration {pit + 1}/{iterations_count} ...")
+            pca_sketch = orthonormalize(mpc, pca_sketch @ data.T) @ data
+        
+        return pca_sketch @ data.T
+
+
+@sequre
+def random_pca_with_norm(mpc, data, miss, data_mean, data_std_inv, top_components_count, oversampling_count, power_iterations_count, filtered_data_size):
+    pca_sketch = RandomSketching.iterative(mpc, data, miss, data_mean, top_components_count, oversampling_count)
+    Q = PowersStep.with_lazy_norm(mpc, pca_sketch, data, miss, data_mean, data_std_inv, power_iterations_count)
+    Z = Q.T / filtered_data_size
+    U = eigen_decomp(mpc, Z @ Z.T)[0][:top_components_count, :len(pca_sketch)]
+    return U, Z
+
+
+@sequre
+def random_pca_without_norm(mpc, data, data_mean, top_components_count, oversampling_count, power_iterations_count):
+    sketch_size = top_components_count + oversampling_count
+    mean_cntr_data = data.astype(float) - data_mean
+
+    pca_sketch = RandomSketching.vectorized(mpc, mean_cntr_data, sketch_size)
+    P = PowersStep.without_norm(mpc, pca_sketch, mean_cntr_data, power_iterations_count)
+    Z = P @ P.T
+    
+    return Z.via_mpc(lambda stensor: eigen_decomp(mpc, stensor)[0][:top_components_count, :sketch_size])
+
+
+@sequre
+def random_pca_without_projection(mpc, data_mpp, top_components_count, oversampling_count, power_iterations_count):
+    """
+    Algorithm 1 from https://arxiv.org/abs/2304.00129 via MPP
+    """
+    # Steps 1 and 2 are skipped: local data is mean centered
+    rho = top_components_count + oversampling_count
+    
+    # Step 3:
+    pi_public = RandomSketching.generate_sketch_matrix((rho, len(data_mpp)))  # rho x n
+    p_mpa = pi_public @ data_mpp  # rho x m
+
+    # Step 4 (Seq):
+    for _ in range(power_iterations_count):
+        with timing(f"CP{mpc.pid}:\tPCA powers iteration {_ + 1}/{power_iterations_count}"):
+            # DQR:
+            bs = mpc.stats.bytes_sent
+            r_mpp = (p_mpa @ data_mpp.T).via_mpc(
+                lambda stensor: orthonormalize(mpc, stensor))  # rho x n
+            p_mpa = r_mpp @ data_mpp  # rho x m
+            be = mpc.stats.bytes_sent
+        print(f"CP{mpc.pid}:\tPCA powers iteration {_ + 1}/{power_iterations_count} bytes sent: {be - bs}")
+
+    # Step 5 (Seq):
+    z_mpp = p_mpa @ data_mpp.T  # rho x n
+    z_cov_mpa = z_mpp @ z_mpp.T # / data_mpp.shape[1]  # rho x rho
+    
+    # Step 6
+    u_mpa = z_cov_mpa.via_mpc(
+        lambda stensor: eigen_decomp(mpc, stensor)[0][:top_components_count])  # top_components_count x rho
+
+    # Step 7
+    return u_mpa @ z_mpp  # top_components_count x n
