@@ -65,26 +65,43 @@ CODON_LLVM_DIR="${CODON_LLVM_DIR:-}"
 LLVM_INC=""
 if [ -n "${SYQURE_LLVM_INCLUDE:-}" ] && [ -d "$SYQURE_LLVM_INCLUDE" ]; then
   LLVM_INC="$SYQURE_LLVM_INCLUDE"
-elif [ -n "$CODON_LLVM_DIR" ] && [ -d "$CODON_LLVM_DIR/install/include" ]; then
+else
+  if [ "$OS_NAME" = "darwin" ] && command -v brew >/dev/null 2>&1; then
+    BREW_LLVM17="$(brew --prefix llvm@17 2>/dev/null || true)"
+    if [ -n "$BREW_LLVM17" ] && [ -d "$BREW_LLVM17/include/llvm" ]; then
+      if [ -n "${LLVM_PREFIX:-}" ] && [ "$LLVM_PREFIX" != "$BREW_LLVM17" ]; then
+        echo "==> Overriding LLVM_PREFIX with llvm@17: $BREW_LLVM17"
+      fi
+      LLVM_PREFIX="$BREW_LLVM17"
+    fi
+  fi
+fi
+if [ -z "$LLVM_INC" ] && [ -n "$CODON_LLVM_DIR" ] && [ -d "$CODON_LLVM_DIR/install/include" ]; then
   LLVM_INC="$CODON_LLVM_DIR/install/include"
-elif [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]; then
+elif [ -z "$LLVM_INC" ] && [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]; then
   LLVM_INC="$ROOT_DIR/codon/llvm-project/install/include"
-elif [ -n "${LLVM_PREFIX:-}" ] && [ -d "$LLVM_PREFIX/include/llvm" ]; then
+elif [ -z "$LLVM_INC" ] && [ -n "${LLVM_PREFIX:-}" ] && [ -d "$LLVM_PREFIX/include/llvm" ]; then
   LLVM_INC="$LLVM_PREFIX/include"
-elif [ -d "$ROOT_DIR/codon/llvm-project/llvm/include" ]; then
+elif [ -z "$LLVM_INC" ] && [ -d "$ROOT_DIR/codon/llvm-project/llvm/include" ]; then
   LLVM_INC="$ROOT_DIR/codon/llvm-project/llvm/include"
-elif [ -d "$ROOT_DIR/external/llvm-project/llvm/include" ]; then
+elif [ -z "$LLVM_INC" ] && [ -d "$ROOT_DIR/external/llvm-project/llvm/include" ]; then
   LLVM_INC="$ROOT_DIR/external/llvm-project/llvm/include"
-elif [ "$OS_NAME" = "darwin" ] && command -v brew >/dev/null 2>&1; then
+elif [ -z "$LLVM_INC" ] && [ "$OS_NAME" = "darwin" ] && command -v brew >/dev/null 2>&1; then
   BREW_LLVM="$(brew --prefix llvm 2>/dev/null || true)"
   if [ -n "$BREW_LLVM" ] && [ -d "$BREW_LLVM/include/llvm" ]; then
     LLVM_INC="$BREW_LLVM/include"
   fi
-elif command -v llvm-config >/dev/null 2>&1; then
+elif [ -z "$LLVM_INC" ] && command -v llvm-config >/dev/null 2>&1; then
   LLVM_INC="$(llvm-config --includedir)"
 fi
 
+REQUIRED_LLVM_HEADER="llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
 if [ -n "$LLVM_INC" ] && [ -d "$LLVM_INC" ]; then
+  if [ ! -f "$LLVM_INC/$REQUIRED_LLVM_HEADER" ]; then
+    echo "Error: LLVM headers missing $REQUIRED_LLVM_HEADER in $LLVM_INC" >&2
+    echo "Hint: use LLVM 17 (brew install llvm@17) and set LLVM_PREFIX accordingly." >&2
+    exit 1
+  fi
   echo "==> Copying LLVM headers from $LLVM_INC"
   mkdir -p "$DIST_DIR/include"
   cp -RL "$LLVM_INC/." "$DIST_DIR/include/"
