@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use syqure::{analyze, analyze_file, bundle, CompileOptions, Syqure};
+use syqure::{analyze_file, analyze, bundle, CompileOptions, Syqure};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -136,14 +136,7 @@ fn print_info() {
     println!("Build Information:");
     println!("  Version:      {}", VERSION);
     println!("  Target:       {}", env!("TARGET"));
-    println!(
-        "  Profile:      {}",
-        if cfg!(debug_assertions) {
-            "debug"
-        } else {
-            "release"
-        }
-    );
+    println!("  Profile:      {}", if cfg!(debug_assertions) { "debug" } else { "release" });
 
     // Compile-time info from build.rs (if available)
     if let Some(cache_path) = option_env!("SYQURE_CACHE_LIB_PATH") {
@@ -211,12 +204,7 @@ fn print_info() {
 
     // Environment variables
     println!("Environment:");
-    for var in [
-        "CODON_PATH",
-        "SYQURE_BUNDLE_CACHE",
-        "DYLD_LIBRARY_PATH",
-        "LD_LIBRARY_PATH",
-    ] {
+    for var in ["CODON_PATH", "SYQURE_BUNDLE_CACHE", "DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"] {
         if let Ok(val) = std::env::var(var) {
             println!("  {}={}", var, val);
         }

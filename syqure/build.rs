@@ -241,7 +241,7 @@ fn bundle_root(bundle: &Path) -> Option<PathBuf> {
     // Extract .tar.zst bundle using zstd | tar to avoid relying on tar -I support.
     let mut zstd = Command::new("zstd")
         .arg("-dc")
-        .arg(bundle)
+        .arg(&bundle)
         .stdout(Stdio::piped())
         .spawn()
         .expect("failed to spawn zstd for bundle");

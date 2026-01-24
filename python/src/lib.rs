@@ -213,11 +213,7 @@ fn compile_and_run(py: Python<'_>, source: String, opts: Option<PyCompileOptions
 }
 
 #[pyfunction]
-fn compile(
-    py: Python<'_>,
-    source: String,
-    opts: Option<PyCompileOptions>,
-) -> PyResult<Option<String>> {
+fn compile(py: Python<'_>, source: String, opts: Option<PyCompileOptions>) -> PyResult<Option<String>> {
     let options = opts.map(|o| o.inner).unwrap_or_default();
     let syqure = Syqure::new(options);
     let result = syqure.compile_and_maybe_run(&source).map_err(map_err)?;
@@ -298,12 +294,7 @@ fn info(py: Python<'_>) -> PyResult<Py<PyDict>> {
 
     // Environment variables
     let env_dict = PyDict::new_bound(py);
-    for var in [
-        "CODON_PATH",
-        "SYQURE_BUNDLE_CACHE",
-        "DYLD_LIBRARY_PATH",
-        "LD_LIBRARY_PATH",
-    ] {
+    for var in ["CODON_PATH", "SYQURE_BUNDLE_CACHE", "DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH"] {
         if let Ok(val) = std::env::var(var) {
             env_dict.set_item(var, val)?;
         }

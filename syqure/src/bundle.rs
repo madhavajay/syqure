@@ -74,7 +74,7 @@ pub fn base_cache_dir() -> Option<PathBuf> {
 fn bundle_name() -> String {
     #[cfg(feature = "runtime-bundle")]
     {
-        std::env::var("SYQURE_BUNDLE_FILE")
+        return std::env::var("SYQURE_BUNDLE_FILE")
             .ok()
             .and_then(|p| {
                 std::path::Path::new(&p)
@@ -82,15 +82,15 @@ fn bundle_name() -> String {
                     .and_then(|s| s.to_str())
                     .map(|s| s.to_string())
             })
-            .unwrap_or_else(|| "bundle".to_string())
+            .unwrap_or_else(|| "bundle".to_string());
     }
     #[cfg(not(feature = "runtime-bundle"))]
     {
-        std::path::Path::new(env!("SYQURE_BUNDLE_FILE"))
+        return std::path::Path::new(env!("SYQURE_BUNDLE_FILE"))
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("bundle")
-            .to_string()
+            .to_string();
     }
 }
 
@@ -100,11 +100,11 @@ fn load_bundle_bytes() -> Result<Vec<u8>> {
         let path = std::env::var("SYQURE_BUNDLE_FILE").map_err(|_| {
             anyhow!("SYQURE_BUNDLE_FILE must be set when runtime-bundle is enabled")
         })?;
-        fs::read(&path).map_err(|e| anyhow!("failed to read bundle {}: {}", path, e))
+        return fs::read(&path).map_err(|e| anyhow!("failed to read bundle {}: {}", path, e));
     }
     #[cfg(not(feature = "runtime-bundle"))]
     {
-        Ok(BUNDLE_BYTES.to_vec())
+        return Ok(BUNDLE_BYTES.to_vec());
     }
 }
 

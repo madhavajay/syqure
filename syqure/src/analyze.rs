@@ -1,7 +1,7 @@
+use std::path::Path;
 use anyhow::Result;
 use regex::Regex;
 use serde::Serialize;
-use std::path::Path;
 
 #[derive(Debug, Serialize)]
 pub struct TypeUsage {
@@ -63,9 +63,7 @@ pub fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
     // Operation counting
     let matmul_count = Regex::new(r"@")?.find_iter(source).count();
     let encrypt_count = Regex::new(r"\.encrypt\s*\(")?.find_iter(source).count();
-    let decrypt_count = Regex::new(r"\.decrypt\s*\(|\.reveal\s*\(")?
-        .find_iter(source)
-        .count();
+    let decrypt_count = Regex::new(r"\.decrypt\s*\(|\.reveal\s*\(")?.find_iter(source).count();
 
     // Compute estimates
     let needs_mhe = has_ciphertensor || has_mpu || has_mpp || has_mpa || uses_mhe;
@@ -85,16 +83,13 @@ pub fn analyze_source(path: &Path, source: &str) -> Result<Analysis> {
     }
     ops_seconds = (ops_seconds * 1000.0).round() / 1000.0;
 
-    let total_seconds =
-        ((jit_seconds + mhe_seconds + mpc_seconds + ops_seconds) * 10.0).round() / 10.0;
+    let total_seconds = ((jit_seconds + mhe_seconds + mpc_seconds + ops_seconds) * 10.0).round() / 10.0;
 
     Ok(Analysis {
-        file: path
-            .file_name()
+        file: path.file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default(),
-        path: path
-            .canonicalize()
+        path: path.canonicalize()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string()),
         types: TypeUsage {
@@ -130,99 +125,31 @@ pub fn print_analysis(analysis: &Analysis) {
     println!("============================================================");
 
     println!("\n--- Type Usage ---");
-    println!(
-        "  Sharetensor (MPC):   {}",
-        if analysis.types.sharetensor {
-            "Yes"
-        } else {
-            "No"
-        }
-    );
-    println!(
-        "  Ciphertensor (HE):   {}",
-        if analysis.types.ciphertensor {
-            "Yes"
-        } else {
-            "No"
-        }
-    );
-    println!(
-        "  MPU (Union):         {}",
-        if analysis.types.mpu { "Yes" } else { "No" }
-    );
-    println!(
-        "  MPP (Partition):     {}",
-        if analysis.types.mpp { "Yes" } else { "No" }
-    );
-    println!(
-        "  MPA (Aggregate):     {}",
-        if analysis.types.mpa { "Yes" } else { "No" }
-    );
+    println!("  Sharetensor (MPC):   {}", if analysis.types.sharetensor { "Yes" } else { "No" });
+    println!("  Ciphertensor (HE):   {}", if analysis.types.ciphertensor { "Yes" } else { "No" });
+    println!("  MPU (Union):         {}", if analysis.types.mpu { "Yes" } else { "No" });
+    println!("  MPP (Partition):     {}", if analysis.types.mpp { "Yes" } else { "No" });
+    println!("  MPA (Aggregate):     {}", if analysis.types.mpa { "Yes" } else { "No" });
 
     println!("\n--- Operation Patterns ---");
-    println!(
-        "  Matrix multiplications (@): {}",
-        analysis.operations.matmul
-    );
-    println!(
-        "  Encrypt calls:              {}",
-        analysis.operations.encrypt
-    );
-    println!(
-        "  Decrypt/reveal calls:       {}",
-        analysis.operations.decrypt
-    );
+    println!("  Matrix multiplications (@): {}", analysis.operations.matmul);
+    println!("  Encrypt calls:              {}", analysis.operations.encrypt);
+    println!("  Decrypt/reveal calls:       {}", analysis.operations.decrypt);
 
     println!("\n--- Runtime Requirements ---");
-    println!(
-        "  Requires MHE setup:  {}",
-        if analysis.runtime.needs_mhe {
-            "Yes"
-        } else {
-            "No (MPC only)"
-        }
-    );
-    println!(
-        "  Can use --skip-mhe-setup:  {}",
-        if analysis.runtime.can_skip_mhe {
-            "Yes"
-        } else {
-            "No"
-        }
-    );
-    println!(
-        "  Uses @local:         {}",
-        if analysis.runtime.uses_local {
-            "Yes"
-        } else {
-            "No"
-        }
-    );
+    println!("  Requires MHE setup:  {}", if analysis.runtime.needs_mhe { "Yes" } else { "No (MPC only)" });
+    println!("  Can use --skip-mhe-setup:  {}", if analysis.runtime.can_skip_mhe { "Yes" } else { "No" });
+    println!("  Uses @local:         {}", if analysis.runtime.uses_local { "Yes" } else { "No" });
 
     println!("\n--- Estimated Runtime ---");
-    println!(
-        "  JIT Compilation:     {:>6.1}s",
-        analysis.estimate.jit_seconds
-    );
+    println!("  JIT Compilation:     {:>6.1}s", analysis.estimate.jit_seconds);
     if analysis.runtime.needs_mhe {
-        println!(
-            "  MHE Key Setup:       {:>6.1}s",
-            analysis.estimate.mhe_seconds
-        );
+        println!("  MHE Key Setup:       {:>6.1}s", analysis.estimate.mhe_seconds);
     }
-    println!(
-        "  MPC Network:         {:>6.1}s",
-        analysis.estimate.mpc_seconds
-    );
-    println!(
-        "  Operations (rough):  {:>6.1}s",
-        analysis.estimate.ops_seconds
-    );
+    println!("  MPC Network:         {:>6.1}s", analysis.estimate.mpc_seconds);
+    println!("  Operations (rough):  {:>6.1}s", analysis.estimate.ops_seconds);
     println!("  --------------------------");
-    println!(
-        "  TOTAL:               {:>6.1}s",
-        analysis.estimate.total_seconds
-    );
+    println!("  TOTAL:               {:>6.1}s", analysis.estimate.total_seconds);
     println!("============================================================");
 }
 
