@@ -45,6 +45,12 @@ mkdir -p "$DIST_DIR/bin" "$DIST_DIR/lib" "$DIST_DIR/include"
 
 echo "==> Copying Codon/Sequre libs (dereferencing symlinks)"
 rm -rf "$DIST_DIR/lib/codon"
+# Remove broken libgmp symlinks in prebuilts (we bundle system gmp later).
+for gmp_link in "$CODON_PATH/lib/codon/libgmp.dylib" "$CODON_PATH/lib/codon/libgmp.so"; do
+  if [ -L "$gmp_link" ] && [ ! -e "$gmp_link" ]; then
+    rm -f "$gmp_link"
+  fi
+done
 cp -RL "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
 
 if [ -d "$CODON_PATH/include" ]; then
@@ -57,12 +63,18 @@ fi
 # Check sources in order: CODON_LLVM_DIR, codon build, LLVM_PREFIX, homebrew, llvm-config
 CODON_LLVM_DIR="${CODON_LLVM_DIR:-}"
 LLVM_INC=""
-if [ -n "$CODON_LLVM_DIR" ] && [ -d "$CODON_LLVM_DIR/install/include" ]; then
+if [ -n "${SYQURE_LLVM_INCLUDE:-}" ] && [ -d "$SYQURE_LLVM_INCLUDE" ]; then
+  LLVM_INC="$SYQURE_LLVM_INCLUDE"
+elif [ -n "$CODON_LLVM_DIR" ] && [ -d "$CODON_LLVM_DIR/install/include" ]; then
   LLVM_INC="$CODON_LLVM_DIR/install/include"
 elif [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]; then
   LLVM_INC="$ROOT_DIR/codon/llvm-project/install/include"
 elif [ -n "${LLVM_PREFIX:-}" ] && [ -d "$LLVM_PREFIX/include/llvm" ]; then
   LLVM_INC="$LLVM_PREFIX/include"
+elif [ -d "$ROOT_DIR/codon/llvm-project/llvm/include" ]; then
+  LLVM_INC="$ROOT_DIR/codon/llvm-project/llvm/include"
+elif [ -d "$ROOT_DIR/external/llvm-project/llvm/include" ]; then
+  LLVM_INC="$ROOT_DIR/external/llvm-project/llvm/include"
 elif [ "$OS_NAME" = "darwin" ] && command -v brew >/dev/null 2>&1; then
   BREW_LLVM="$(brew --prefix llvm 2>/dev/null || true)"
   if [ -n "$BREW_LLVM" ] && [ -d "$BREW_LLVM/include/llvm" ]; then
