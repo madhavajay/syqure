@@ -58,8 +58,6 @@ fn main() {
     }
     if let Ok(llvm_inc) = env::var("SYQURE_LLVM_INCLUDE") {
         bridge.include(llvm_inc);
-    } else if let Some(llvm_inc) = detect_llvm_include() {
-        bridge.include(llvm_inc);
     }
     // Local bridge headers
     bridge.include("src");
@@ -184,67 +182,6 @@ fn repo_root() -> Option<std::path::PathBuf> {
         .map(|p| p.to_path_buf())
 }
 
-fn bundle_root_from_bin(root: &Path, triple: &str) -> Option<PathBuf> {
-    let platform = if triple.contains("apple-darwin") {
-        if triple.starts_with("aarch64") {
-            Some("macos-arm64")
-        } else if triple.starts_with("x86_64") {
-            Some("macos-x86_64")
-        } else {
-            None
-        }
-    } else if triple.contains("linux") {
-        if triple.contains("x86_64") {
-            Some("linux-x86")
-        } else if triple.contains("aarch64") {
-            Some("linux-arm64")
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    platform.and_then(|p| {
-        let candidate = root.join("bin").join(p).join("codon");
-        if candidate.exists() {
-            Some(candidate)
-        } else {
-            None
-        }
-    })
-}
-
-fn detect_llvm_include() -> Option<PathBuf> {
-    let candidates = [
-        "/opt/homebrew/opt/llvm@17/include",
-        "/opt/homebrew/opt/llvm/include",
-        "/usr/local/opt/llvm@17/include",
-        "/usr/local/opt/llvm/include",
-    ];
-    for candidate in candidates {
-        let path = Path::new(candidate);
-        if path.join("llvm/Support/Error.h").exists() {
-            return Some(path.to_path_buf());
-        }
-    }
-
-    for bin in ["llvm-config-17", "llvm-config"] {
-        if let Ok(out) = Command::new(bin).arg("--includedir").output() {
-            if out.status.success() {
-                let inc = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !inc.is_empty() {
-                    let path = PathBuf::from(&inc);
-                    if path.join("llvm/Support/Error.h").exists() {
-                        return Some(path);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 fn set_bundle_env() -> PathBuf {
     if let Some(val) = env::var_os("SYQURE_BUNDLE_FILE") {
         let path = PathBuf::from(&val);
@@ -264,31 +201,6 @@ fn set_bundle_env() -> PathBuf {
                 println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", candidate.display());
                 println!("cargo:rerun-if-changed={}", candidate.display());
                 return candidate;
-            }
-            if let Some(bundle_root) = bundle_root_from_bin(&root, &triple) {
-                let out = Path::new(&env::var("OUT_DIR").unwrap())
-                    .join(format!("bundle-bin-{}.tar.zst", triple));
-                let _ = std::fs::remove_file(&out);
-                let mut tar = Command::new("tar")
-                    .arg("-C")
-                    .arg(&bundle_root)
-                    .arg("-ch")
-                    .arg(".")
-                    .stdout(Stdio::piped())
-                    .spawn()
-                    .expect("failed to spawn tar for bundle");
-                let status = Command::new("zstd")
-                    .arg("-19")
-                    .arg("-o")
-                    .arg(&out)
-                    .stdin(Stdio::from(tar.stdout.take().expect("missing tar stdout pipe")))
-                    .status()
-                    .expect("failed to run zstd for bundle");
-                let _ = tar.wait();
-                if status.success() {
-                    println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", out.display());
-                    return out;
-                }
             }
             // Fallback: if we have a local codon install, package it into OUT_DIR.
             let codon_lib = root.join("codon/install/lib/codon");
