@@ -60,12 +60,15 @@ if [ -d "$CODON_PATH/include" ]; then
 fi
 
 # Include LLVM headers (required for C++ bridge compilation)
-# Check sources in order: CODON_LLVM_DIR, codon build, LLVM_PREFIX, homebrew, llvm-config
+# Check sources in order: repo bundled LLVM 17, CODON_LLVM_DIR, codon build, LLVM_PREFIX, homebrew, llvm-config
 CODON_LLVM_DIR="${CODON_LLVM_DIR:-}"
 LLVM_INC=""
 if [ -n "${SYQURE_LLVM_INCLUDE:-}" ] && [ -d "$SYQURE_LLVM_INCLUDE" ]; then
   LLVM_INC="$SYQURE_LLVM_INCLUDE"
 else
+  if [ -d "$ROOT_DIR/llvm-17.0.6/include/llvm" ]; then
+    LLVM_INC="$ROOT_DIR/llvm-17.0.6/include"
+  fi
   if [ "$OS_NAME" = "darwin" ] && command -v brew >/dev/null 2>&1; then
     BREW_LLVM17="$(brew --prefix llvm@17 2>/dev/null || true)"
     if [ -n "$BREW_LLVM17" ] && [ -d "$BREW_LLVM17/include/llvm" ]; then

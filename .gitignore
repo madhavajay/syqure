@@ -26,3 +26,4 @@ _dump_*
 **/.ipynb_checkpoints/*
 .claude/*
 .env
+llvm-17.0.6/
