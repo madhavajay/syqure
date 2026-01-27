@@ -221,7 +221,7 @@ fn ensure_libgmp_available(codon_root: &Path) {
 
         // If the directory exists but libgmp.so doesn't, create symlink
         if target_dir.exists() && !target_gmp.exists() {
-            if let Err(_) = std::os::unix::fs::symlink(&bundled_gmp, &target_gmp) {
+            if std::os::unix::fs::symlink(&bundled_gmp, &target_gmp).is_err() {
                 // Symlink failed, try copy as fallback
                 let _ = std::fs::copy(&bundled_gmp, &target_gmp);
             }

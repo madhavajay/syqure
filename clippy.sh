@@ -8,4 +8,6 @@ cd "$SCRIPT_DIR"
 cargo fmt --all
 
 # Lint everything (lib + binary), treat warnings as errors
-cargo clippy --fix --allow-dirty --workspace --all-targets --all-features --no-deps -- -D warnings
+# Note: --all-features not used because runtime-bundle feature skips bundle extraction
+# and requires LLVM headers to be installed locally
+cargo clippy --fix --allow-dirty --workspace --all-targets --no-deps -- -D warnings

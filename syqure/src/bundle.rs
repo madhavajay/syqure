@@ -86,11 +86,11 @@ fn bundle_name() -> String {
     }
     #[cfg(not(feature = "runtime-bundle"))]
     {
-        return std::path::Path::new(env!("SYQURE_BUNDLE_FILE"))
+        std::path::Path::new(env!("SYQURE_BUNDLE_FILE"))
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("bundle")
-            .to_string();
+            .to_string()
     }
 }
 
@@ -104,7 +104,7 @@ fn load_bundle_bytes() -> Result<Vec<u8>> {
     }
     #[cfg(not(feature = "runtime-bundle"))]
     {
-        return Ok(BUNDLE_BYTES.to_vec());
+        Ok(BUNDLE_BYTES.to_vec())
     }
 }
 

@@ -185,6 +185,24 @@ fn repo_root() -> Option<std::path::PathBuf> {
 fn set_bundle_env() -> PathBuf {
     if let Some(val) = env::var_os("SYQURE_BUNDLE_FILE") {
         let path = PathBuf::from(&val);
+        if path.is_dir() {
+            if let Ok(triple) = env::var("TARGET") {
+                let direct = path.join(format!("{}.tar.zst", triple));
+                if direct.exists() {
+                    println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", direct.display());
+                    println!("cargo:rerun-if-changed={}", direct.display());
+                    return direct;
+                }
+                let nested = path
+                    .join("syqure/bundles")
+                    .join(format!("{}.tar.zst", triple));
+                if nested.exists() {
+                    println!("cargo:rustc-env=SYQURE_BUNDLE_FILE={}", nested.display());
+                    println!("cargo:rerun-if-changed={}", nested.display());
+                    return nested;
+                }
+            }
+        }
         println!(
             "cargo:rustc-env=SYQURE_BUNDLE_FILE={}",
             val.to_string_lossy()
@@ -241,7 +259,7 @@ fn bundle_root(bundle: &Path) -> Option<PathBuf> {
     // Extract .tar.zst bundle using zstd | tar to avoid relying on tar -I support.
     let mut zstd = Command::new("zstd")
         .arg("-dc")
-        .arg(&bundle)
+        .arg(bundle)
         .stdout(Stdio::piped())
         .spawn()
         .expect("failed to spawn zstd for bundle");
