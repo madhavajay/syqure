@@ -63,7 +63,7 @@ enum Command {
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    match &args.command {
+    let result: Result<()> = match &args.command {
         Some(Command::Analyze { source, json }) => {
             let analysis = analyze_file(source)?;
             if *json {
@@ -71,23 +71,39 @@ fn main() -> Result<()> {
             } else {
                 analyze::print_analysis(&analysis);
             }
+            Ok(())
         }
         Some(Command::Run { source }) => {
             run_source(&args, source)?;
+            Ok(())
         }
         Some(Command::Info) => {
             print_info();
+            Ok(())
         }
         None => {
             // Default behavior: if source is provided without subcommand, run it
             if let Some(ref source) = args.source {
                 run_source(&args, source)?;
+                Ok(())
             } else {
                 // No source provided, show help
                 use clap::CommandFactory;
                 Args::command().print_help()?;
+                Ok(())
             }
         }
+    };
+
+    if let Err(err) = result {
+        return Err(err);
+    }
+
+    if std::env::var("SYQURE_FORCE_EXIT")
+        .map(|v| v != "0")
+        .unwrap_or(true)
+    {
+        std::process::exit(0);
     }
 
     Ok(())
