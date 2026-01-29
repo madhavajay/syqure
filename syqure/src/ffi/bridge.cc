@@ -2,9 +2,13 @@
 
 #include <cstdio>
 #include <fcntl.h>
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -50,7 +54,8 @@ private:
 class OutputCapture {
 public:
   OutputCapture() : stdout_pipe_{-1, -1}, stderr_pipe_{-1, -1},
-                    saved_stdout_(-1), saved_stderr_(-1), capturing_(false) {}
+                    saved_stdout_(-1), saved_stderr_(-1), capturing_(false),
+                    stop_(false) {}
 
   ~OutputCapture() { stop(); }
 
@@ -65,10 +70,6 @@ public:
       return false;
     }
 
-    // Set read ends to non-blocking
-    fcntl(stdout_pipe_[0], F_SETFL, O_NONBLOCK);
-    fcntl(stderr_pipe_[0], F_SETFL, O_NONBLOCK);
-
     // Save original fds
     fflush(stdout);
     fflush(stderr);
@@ -80,11 +81,15 @@ public:
     dup2(stderr_pipe_[1], STDERR_FILENO);
 
     capturing_ = true;
+    stop_.store(false);
+    stdout_thread_ = std::thread([this]() { readLoop(stdout_pipe_[0], stdout_output_, stdout_mu_); });
+    stderr_thread_ = std::thread([this]() { readLoop(stderr_pipe_[0], stderr_output_, stderr_mu_); });
     return true;
   }
 
   void stop() {
     if (!capturing_) return;
+    stop_.store(true);
 
     // Flush before restoring
     fflush(stdout);
@@ -112,9 +117,9 @@ public:
       stderr_pipe_[1] = -1;
     }
 
-    // Read captured output
-    stdout_output_ = readPipe(stdout_pipe_[0]);
-    stderr_output_ = readPipe(stderr_pipe_[0]);
+    // Join reader threads after closing write ends to signal EOF
+    if (stdout_thread_.joinable()) stdout_thread_.join();
+    if (stderr_thread_.joinable()) stderr_thread_.join();
 
     // Close read ends
     if (stdout_pipe_[0] >= 0) {
@@ -133,15 +138,29 @@ public:
   const std::string& getStderr() const { return stderr_output_; }
 
 private:
-  std::string readPipe(int fd) {
-    std::string result;
-    if (fd < 0) return result;
+  void readLoop(int fd, std::string &out, std::mutex &mu) {
+    if (fd < 0) return;
     char buf[4096];
-    ssize_t n;
-    while ((n = read(fd, buf, sizeof(buf))) > 0) {
-      result.append(buf, n);
+    while (true) {
+      ssize_t n = read(fd, buf, sizeof(buf));
+      if (n > 0) {
+        std::lock_guard<std::mutex> lock(mu);
+        out.append(buf, n);
+        continue;
+      }
+      if (n == 0) {
+        break;
+      }
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (stop_.load()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        } else {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        continue;
+      }
+      break;
     }
-    return result;
   }
 
   int stdout_pipe_[2];
@@ -151,6 +170,11 @@ private:
   bool capturing_;
   std::string stdout_output_;
   std::string stderr_output_;
+  std::thread stdout_thread_;
+  std::thread stderr_thread_;
+  std::mutex stdout_mu_;
+  std::mutex stderr_mu_;
+  std::atomic<bool> stop_;
 };
 
 namespace {
