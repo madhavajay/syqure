@@ -1,3 +1,5 @@
+import os
+
 from sequre import sequre, mpc, Sharetensor as ST
 
 
@@ -11,7 +13,11 @@ def main():
     m = mpc()
     # Each party's private input (dealer CP0 has none).
     party_inputs = {1: 5, 2: 9}
-    my_val = party_inputs.get(m.pid, 0)
+    env_val = os.getenv("SEQURE_INPUT", default="")
+    if env_val:
+        my_val = int(env_val)
+    else:
+        my_val = party_inputs.get(m.pid, 0)
 
     a = ST.enc(
         m,

@@ -1,0 +1,42 @@
+import os
+
+from numpy.create import array
+
+import sequre.lattiseq.ckks as ckks
+
+from sequre import mpc
+from sequre.types.ciphertensor import Ciphertensor
+
+
+def main():
+    m = mpc()
+
+    # Each party's private input (dealer CP0 has none)
+    party_inputs = {1: 5.0, 2: 9.0}
+    env_val = os.getenv("SEQURE_INPUT", default="")
+    if env_val:
+        my_val = float(env_val)
+    else:
+        my_val = party_inputs.get(m.pid, 0.0)
+
+    if m.pid > 0:
+        # Encrypt local input as a Ciphertensor
+        local_ct = Ciphertensor[ckks.Ciphertext].enc(m, array([my_val]))
+
+        # Exchange ciphertexts so both compute parties have the sum ciphertext.
+        if m.pid == 1:
+            other_ct = m.comms.receive_as_jar(2, Ciphertensor[ckks.Ciphertext])
+            total = local_ct.add(m, other_ct)
+            m.comms.send_as_jar(total, 2)
+        else:
+            m.comms.send_as_jar(local_ct, 1)
+            total = m.comms.receive_as_jar(1, Ciphertensor[ckks.Ciphertext])
+
+        # Reveal (collective decrypt) to compute parties only
+        result = total.reveal(m, T=float).flatten().tolist()[0]
+        print(f"CP{m.pid}: my input = {my_val}, sum = {result}")
+
+    m.done()
+
+
+main()
