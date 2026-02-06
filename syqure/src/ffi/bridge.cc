@@ -270,17 +270,15 @@ SyBuildResult sy_codon_run(const SyCompileOpts &opts,
   // Restore stderr before running so compiler warnings are visible if not quiet
   suppressor.restore();
 
-  // Capture stdout/stderr from the JIT-executed program
-  OutputCapture capture;
-  capture.start();
-
+  // NOTE: OutputCapture is disabled because Codon's @local decorator uses fork()
+  // to spawn MPC parties. OutputCapture's pipe threads + dup2 redirects cause the
+  // forked child to crash with "crashed on child side of fork pre-exec" (SIGABRT).
+  // Output goes directly to stdout/stderr instead.
   compiler->getLLVMVisitor()->run(args, libs);
 
-  capture.stop();
-
   res.status = 0;
-  res.stdout_output = capture.getStdout();
-  res.stderr_output = capture.getStderr();
+  res.stdout_output = "";
+  res.stderr_output = "";
   return res;
 }
 
