@@ -664,7 +664,14 @@ jobs:
             echo "Missing Codon libs at $CODON_SRC" >&2
             exit 1
           fi
-          cp -R "$CODON_SRC" "$DOCKER_CTX/bin/codon/lib/"
+          # Dereference symlinks (e.g. stdlib -> ../../../../../codon/stdlib)
+          # so the Docker context contains real files even when the source tree
+          # was assembled from precompiled artifacts.
+          cp -RL "$CODON_SRC" "$DOCKER_CTX/bin/codon/lib/"
+          if [ ! -d "$DOCKER_CTX/bin/codon/lib/codon/stdlib" ]; then
+            echo "Codon stdlib missing in Docker context after copy." >&2
+            exit 1
+          fi
           cp -R example "$DOCKER_CTX/example"
           cp docker/Dockerfile.syqure "$DOCKER_CTX/Dockerfile.syqure"
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin

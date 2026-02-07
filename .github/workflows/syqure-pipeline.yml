@@ -558,7 +558,13 @@ jobs:
           rm -rf "$DOCKER_CTX"
           mkdir -p "$DOCKER_CTX/target/debug" "$DOCKER_CTX/bin/codon/lib"
           cp "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" "$DOCKER_CTX/target/debug/"
-          cp -R "$SEQURE_ARTIFACT_DIR/extract/codon/lib/codon" "$DOCKER_CTX/bin/codon/lib/"
+          # Dereference symlinks (e.g. stdlib -> ../../../../../codon/stdlib)
+          # so Docker context has real stdlib/plugin files.
+          cp -RL "$SEQURE_ARTIFACT_DIR/extract/codon/lib/codon" "$DOCKER_CTX/bin/codon/lib/"
+          if [ ! -d "$DOCKER_CTX/bin/codon/lib/codon/stdlib" ]; then
+            echo "Codon stdlib missing in Docker context after copy." >&2
+            exit 1
+          fi
           cp -R example "$DOCKER_CTX/example"
           cp docker/Dockerfile.syqure "$DOCKER_CTX/Dockerfile.syqure"
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -1054,7 +1060,13 @@ jobs:
           rm -rf "$DOCKER_CTX"
           mkdir -p "$DOCKER_CTX/target/debug" "$DOCKER_CTX/bin/codon/lib"
           cp "$SYQURE_ARTIFACT_DIR/extract/target/debug/syqure" "$DOCKER_CTX/target/debug/"
-          cp -R "$SEQURE_ARTIFACT_DIR/extract/codon/lib/codon" "$DOCKER_CTX/bin/codon/lib/"
+          # Dereference symlinks (e.g. stdlib -> ../../../../../codon/stdlib)
+          # so Docker context has real stdlib/plugin files.
+          cp -RL "$SEQURE_ARTIFACT_DIR/extract/codon/lib/codon" "$DOCKER_CTX/bin/codon/lib/"
+          if [ ! -d "$DOCKER_CTX/bin/codon/lib/codon/stdlib" ]; then
+            echo "Codon stdlib missing in Docker context after copy." >&2
+            exit 1
+          fi
           cp -R example "$DOCKER_CTX/example"
           cp docker/Dockerfile.syqure "$DOCKER_CTX/Dockerfile.syqure"
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
