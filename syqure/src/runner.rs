@@ -171,7 +171,9 @@ fn resolve_codon_root(preferred: &Path) -> Result<PathBuf> {
             }
             Err(bundle_err).with_context(|| {
                 format!(
-                    "failed to load bundled Codon/Sequre and no local install found at {}",
+                    "No local Codon/Sequre at {} and bundle extraction failed. \
+                     For dev mode, run from the repo root so bin/<platform>/codon is found. \
+                     For production, ensure the bundle is up to date.",
                     local.display()
                 )
             })
@@ -202,13 +204,29 @@ fn default_codon_path() -> PathBuf {
     if let Some(env_path) = std::env::var_os("CODON_PATH") {
         return PathBuf::from(env_path);
     }
-    // Try to locate a bundled codon lib next to the executable (set by package step).
+    // Try to locate a bundled codon lib next to the executable (production install).
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let bundled = dir.join("lib/codon");
             if bundled.exists() {
                 return bundled;
             }
+        }
+    }
+    // Dev mode: check bin/<platform>/codon in the repo working directory.
+    // This path has live symlinks to the sequre submodule so changes are
+    // reflected immediately without rebuilding the bundle.
+    let platform = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "macos-arm64"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "linux-x86"
+    } else {
+        ""
+    };
+    if !platform.is_empty() {
+        let dev_root = PathBuf::from(format!("bin/{}/codon/lib/codon", platform));
+        if dev_root.join("stdlib").exists() && dev_root.join("plugins").exists() {
+            return dev_root;
         }
     }
     PathBuf::from("codon/install")
