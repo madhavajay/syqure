@@ -599,7 +599,9 @@ jobs:
 
       - name: Init submodules for stdlib symlinks
         if: ${{ inputs.use_precompiled_bins }}
-        run: git submodule update --init --depth 1 codon sequre
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth 1 codon sequre
 
       - name: Set release version
         id: version
