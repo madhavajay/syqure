@@ -597,6 +597,10 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
+      - name: Init submodules for stdlib symlinks
+        if: ${{ inputs.use_precompiled_bins }}
+        run: git submodule update --init --depth 1 codon sequre
+
       - name: Set release version
         id: version
         run: |
@@ -664,10 +668,13 @@ jobs:
             echo "Missing Codon libs at $CODON_SRC" >&2
             exit 1
           fi
-          # Dereference symlinks (e.g. stdlib -> ../../../../../codon/stdlib)
-          # so the Docker context contains real files even when the source tree
-          # was assembled from precompiled artifacts.
-          cp -RL "$CODON_SRC" "$DOCKER_CTX/bin/codon/lib/"
+          # Copy libs without following symlinks, then replace stdlib symlinks
+          # with real files (symlinks point into submodule dirs that may not exist in CI)
+          cp -R "$CODON_SRC" "$DOCKER_CTX/bin/codon/lib/"
+          rm -rf "$DOCKER_CTX/bin/codon/lib/codon/stdlib"
+          cp -R "codon/stdlib" "$DOCKER_CTX/bin/codon/lib/codon/"
+          rm -rf "$DOCKER_CTX/bin/codon/lib/codon/plugins/sequre/stdlib"
+          cp -R "sequre/stdlib" "$DOCKER_CTX/bin/codon/lib/codon/plugins/sequre/"
           if [ ! -d "$DOCKER_CTX/bin/codon/lib/codon/stdlib" ]; then
             echo "Codon stdlib missing in Docker context after copy." >&2
             exit 1
