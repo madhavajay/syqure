@@ -95,9 +95,7 @@ fn main() -> Result<()> {
         }
     };
 
-    if let Err(err) = result {
-        return Err(err);
-    }
+    result?;
 
     if std::env::var("SYQURE_FORCE_EXIT")
         .map(|v| v != "0")
