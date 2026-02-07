@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 
 use crate::bundle::ensure_bundle;
 use crate::ffi::{sy_codon_build_exe, sy_codon_run, SyCompileOpts};
@@ -69,13 +69,18 @@ impl Syqure {
             return Err(anyhow!("source file not found: {}", source.display()));
         }
 
-        // Ensure Codon finds its stdlib and plugins by exporting CODON_PATH when missing.
-        // Point CODON_PATH directly at the bundled stdlib (what Codon expects), and bundle plugins.
-        let codon_root = ensure_bundle()?;
+        let codon_root = resolve_codon_root(&self.opts.codon_path)?;
         let stdlib = codon_root.join("stdlib");
         std::env::set_var("CODON_PATH", &stdlib);
         if std::env::var_os("CODON_PLUGIN_PATH").is_none() {
             std::env::set_var("CODON_PLUGIN_PATH", codon_root.join("plugins"));
+        }
+        if std::env::var("SYQURE_DEBUG").ok().as_deref() == Some("1") {
+            eprintln!("syqure: codon_root={}", codon_root.display());
+            eprintln!("syqure: CODON_PATH={}", stdlib.display());
+            if let Ok(val) = std::env::var("CODON_PLUGIN_PATH") {
+                eprintln!("syqure: CODON_PLUGIN_PATH={}", val);
+            }
         }
 
         // Sequre's gmp module does dlopen("libgmp.so") which looks in hardcoded build paths.
@@ -148,17 +153,80 @@ fn default_output_path(source: &Path) -> PathBuf {
     path
 }
 
+fn resolve_codon_root(preferred: &Path) -> Result<PathBuf> {
+    let local = normalize_codon_root(preferred);
+    if local.join("stdlib").exists() {
+        return Ok(local);
+    }
+
+    if env_truthy("SYQURE_SKIP_BUNDLE") {
+        return Ok(local);
+    }
+
+    match ensure_bundle() {
+        Ok(root) => Ok(root),
+        Err(bundle_err) => {
+            if local.join("stdlib").exists() {
+                return Ok(local);
+            }
+            Err(bundle_err).with_context(|| {
+                format!(
+                    "No local Codon/Sequre at {} and bundle extraction failed. \
+                     For dev mode, run from the repo root so bin/<platform>/codon is found. \
+                     For production, ensure the bundle is up to date.",
+                    local.display()
+                )
+            })
+        }
+    }
+}
+
+fn normalize_codon_root(path: &Path) -> PathBuf {
+    if path.join("stdlib").exists() {
+        path.to_path_buf()
+    } else {
+        path.join("lib/codon")
+    }
+}
+
+fn env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn default_codon_path() -> PathBuf {
     if let Some(env_path) = std::env::var_os("CODON_PATH") {
         return PathBuf::from(env_path);
     }
-    // Try to locate a bundled codon lib next to the executable (set by package step).
+    // Try to locate a bundled codon lib next to the executable (production install).
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let bundled = dir.join("lib/codon");
             if bundled.exists() {
                 return bundled;
             }
+        }
+    }
+    // Dev mode: check bin/<platform>/codon in the repo working directory.
+    // This path has live symlinks to the sequre submodule so changes are
+    // reflected immediately without rebuilding the bundle.
+    let platform = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "macos-arm64"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "linux-x86"
+    } else {
+        ""
+    };
+    if !platform.is_empty() {
+        let dev_root = PathBuf::from(format!("bin/{}/codon/lib/codon", platform));
+        if dev_root.join("stdlib").exists() && dev_root.join("plugins").exists() {
+            return dev_root;
         }
     }
     PathBuf::from("codon/install")

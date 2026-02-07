@@ -1,0 +1,33 @@
+from numpy.create import array
+
+import secure_operator
+import sequre.lattiseq.ckks as ckks
+
+from sequre import local
+from sequre.types.ciphertensor import Ciphertensor
+
+
+@local
+def demo(mpc):
+    # Each party's private input (dealer CP0 has none)
+    party_inputs = {1: 5.0, 2: 9.0}
+    my_val = party_inputs.get(mpc.pid, 0.0)
+
+    if mpc.pid > 0:
+        # Encrypt CP1's input as a Ciphertensor
+        a = Ciphertensor[ckks.Ciphertext].enc(mpc, array([my_val if mpc.pid == 1 else 0.0]))
+        # Encrypt CP2's input as a Ciphertensor
+        b = Ciphertensor[ckks.Ciphertext].enc(mpc, array([my_val if mpc.pid == 2 else 0.0]))
+
+        # Add the ciphertensors using secure_operator (enables IR pass)
+        total = secure_operator.add(mpc, a, b)
+
+        # Reveal (decrypt) to compute parties only
+        if mpc.pid in (1, 2):
+            result = total.reveal(mpc, T=float).flatten().tolist()[0]
+            print(f"CP{mpc.pid}: my input = {my_val}, sum = {result}")
+
+
+# Local simulation (CP0 dealer + CP1/CP2 compute parties)
+demo()
+
