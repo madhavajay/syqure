@@ -1,0 +1,74 @@
+from sequre import sequre, mpc, Sharetensor as ST
+from numpy.create import array, zeros, zeros_like
+
+
+def load_json(path: str) -> List[int]:
+    content = open(path).read().strip()
+    if not content or content == "[]":
+        return []
+    inner = content.strip("[]").strip()
+    if not inner:
+        return []
+    result: List[int] = []
+    for x in inner.split(","):
+        x = x.strip()
+        if x:
+            result.append(int(x))
+    return result
+
+
+def save_json(path: str, data: List[int]):
+    parts: List[str] = []
+    for x in data:
+        parts.append(str(x))
+    open(path, "w").write("[" + ",".join(parts) + "]")
+
+
+@sequre
+def add(m, a, b):
+    return a + b
+
+
+def main():
+    m = mpc()
+    pid = m.pid
+
+    input_path = "example/aligned_counts.json"
+
+    all_data = load_json(input_path)
+    n = len(all_data)
+    data: List[int] = all_data if (pid == 1 or pid == 2) else []
+    print(f"CP{pid}: n={n}, data_len={len(data)}")
+
+    m.comms.sync_parties()
+    print(f"CP{pid}: starting MPC with n={n}")
+
+    if len(data) == 0:
+        data_vec = zeros((n,), dtype=int)
+    else:
+        data_vec = array(data, dtype=int)
+    zero_vec = zeros_like(data_vec)
+
+    v1 = data_vec if pid == 1 else zero_vec
+    v2 = data_vec if pid == 2 else zero_vec
+
+    s1 = ST.enc(m, v1, 1, m.default_mpc_modulus)
+    s2 = ST.enc(m, v2, 2, m.default_mpc_modulus)
+    total = add(m, s1, s2)
+    revealed = total.reveal(m).tolist()
+
+    result: List[int] = []
+    for x in revealed:
+        result.append(int(x))
+
+    if pid in (1, 2):
+        print(f"CP{pid}: result length={len(result)}, first 5={result[:5]}, last 5={result[-5:]}")
+
+    output_path = f"/tmp/syqure_big_result_cp{pid}.json"
+    save_json(output_path, result)
+    print(f"CP{pid}: saved result to {output_path}")
+
+    m.done()
+
+
+main()
