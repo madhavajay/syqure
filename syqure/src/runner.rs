@@ -200,6 +200,10 @@ fn env_truthy(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn syqure_socket_trace_enabled() -> bool {
+    env_truthy("SYQURE_SOCKET_TRACE")
+}
+
 fn default_codon_path() -> PathBuf {
     if let Some(env_path) = std::env::var_os("CODON_PATH") {
         return PathBuf::from(env_path);
@@ -233,12 +237,40 @@ fn default_codon_path() -> PathBuf {
 }
 
 fn clean_sockets() -> Result<()> {
+    let trace = syqure_socket_trace_enabled();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if trace {
+        eprintln!("syqure[socket-trace]: clean_sockets cwd={}", cwd.display());
+    }
     let walker = walkdir::WalkDir::new(".").into_iter();
+    let mut removed = 0usize;
     for entry in walker.filter_map(Result::ok) {
         let name = entry.file_name().to_string_lossy();
         if name.starts_with("sock.") {
-            let _ = std::fs::remove_file(entry.path());
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => {
+                    removed += 1;
+                    if trace {
+                        eprintln!(
+                            "syqure[socket-trace]: removed {}",
+                            entry.path().display()
+                        );
+                    }
+                }
+                Err(err) => {
+                    if trace {
+                        eprintln!(
+                            "syqure[socket-trace]: failed_remove {} err={}",
+                            entry.path().display(),
+                            err
+                        );
+                    }
+                }
+            }
         }
+    }
+    if trace {
+        eprintln!("syqure[socket-trace]: clean_sockets removed_count={removed}");
     }
     Ok(())
 }
