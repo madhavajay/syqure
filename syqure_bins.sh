@@ -60,9 +60,19 @@ if [ -d "$CODON_PATH/include" ]; then
 fi
 
 # Include LLVM headers (required for C++ bridge compilation)
-# Check sources in order: repo bundled LLVM 17, CODON_LLVM_DIR, codon build, LLVM_PREFIX, homebrew, llvm-config
+# Check sources in order: explicit override, repo bundled LLVM 17, CODON_LLVM_DIR,
+# codon LLVM install, LLVM_PREFIX/homebrew llvm@17, llvm-config-17, llvm-config.
+# Note: raw llvm-project source include trees are intentionally not used because
+# they can mismatch Codon's expected generated LLVM config headers.
 CODON_LLVM_DIR="${CODON_LLVM_DIR:-}"
 LLVM_INC=""
+llvm_major_from_include() {
+  local inc="$1"
+  local cfg="$inc/llvm/Config/llvm-config.h"
+  if [ -f "$cfg" ]; then
+    awk '/^#define LLVM_VERSION_MAJOR / { print $3; exit }' "$cfg"
+  fi
+}
 if [ -n "${SYQURE_LLVM_INCLUDE:-}" ] && [ -d "$SYQURE_LLVM_INCLUDE" ]; then
   LLVM_INC="$SYQURE_LLVM_INCLUDE"
 else
@@ -85,15 +95,13 @@ elif [ -z "$LLVM_INC" ] && [ -d "$ROOT_DIR/codon/llvm-project/install/include" ]
   LLVM_INC="$ROOT_DIR/codon/llvm-project/install/include"
 elif [ -z "$LLVM_INC" ] && [ -n "${LLVM_PREFIX:-}" ] && [ -d "$LLVM_PREFIX/include/llvm" ]; then
   LLVM_INC="$LLVM_PREFIX/include"
-elif [ -z "$LLVM_INC" ] && [ -d "$ROOT_DIR/codon/llvm-project/llvm/include" ]; then
-  LLVM_INC="$ROOT_DIR/codon/llvm-project/llvm/include"
-elif [ -z "$LLVM_INC" ] && [ -d "$ROOT_DIR/external/llvm-project/llvm/include" ]; then
-  LLVM_INC="$ROOT_DIR/external/llvm-project/llvm/include"
 elif [ -z "$LLVM_INC" ] && [ "$OS_NAME" = "darwin" ] && command -v brew >/dev/null 2>&1; then
   BREW_LLVM="$(brew --prefix llvm 2>/dev/null || true)"
   if [ -n "$BREW_LLVM" ] && [ -d "$BREW_LLVM/include/llvm" ]; then
     LLVM_INC="$BREW_LLVM/include"
   fi
+elif [ -z "$LLVM_INC" ] && command -v llvm-config-17 >/dev/null 2>&1; then
+  LLVM_INC="$(llvm-config-17 --includedir)"
 elif [ -z "$LLVM_INC" ] && command -v llvm-config >/dev/null 2>&1; then
   LLVM_INC="$(llvm-config --includedir)"
 fi
@@ -104,6 +112,20 @@ if [ -n "$LLVM_INC" ] && [ -d "$LLVM_INC" ]; then
     echo "Error: LLVM headers missing $REQUIRED_LLVM_HEADER in $LLVM_INC" >&2
     echo "Hint: use LLVM 17 (brew install llvm@17) and set LLVM_PREFIX accordingly." >&2
     exit 1
+  fi
+  LLVM_MAJOR="$(llvm_major_from_include "$LLVM_INC" || true)"
+  if [ "${SYQURE_ALLOW_UNSUPPORTED_LLVM:-0}" != "1" ]; then
+    if [ -z "$LLVM_MAJOR" ]; then
+      echo "Error: Could not determine LLVM version from $LLVM_INC/llvm/Config/llvm-config.h" >&2
+      echo "Hint: point to an LLVM 17 install include dir (not raw llvm-project source)." >&2
+      exit 1
+    fi
+    if [ "$LLVM_MAJOR" != "17" ]; then
+      echo "Error: LLVM major version $LLVM_MAJOR at $LLVM_INC is unsupported (expected 17)." >&2
+      echo "Hint: install llvm-17-dev (Linux) or llvm@17 (macOS), then set SYQURE_LLVM_INCLUDE/LLVM_PREFIX." >&2
+      echo "      To bypass this guard: SYQURE_ALLOW_UNSUPPORTED_LLVM=1 (not recommended)." >&2
+      exit 1
+    fi
   fi
   echo "==> Copying LLVM headers from $LLVM_INC"
   mkdir -p "$DIST_DIR/include"
