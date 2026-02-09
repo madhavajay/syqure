@@ -251,10 +251,7 @@ fn clean_sockets() -> Result<()> {
                 Ok(()) => {
                     removed += 1;
                     if trace {
-                        eprintln!(
-                            "syqure[socket-trace]: removed {}",
-                            entry.path().display()
-                        );
+                        eprintln!("syqure[socket-trace]: removed {}", entry.path().display());
                     }
                 }
                 Err(err) => {
