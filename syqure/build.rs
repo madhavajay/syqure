@@ -106,6 +106,13 @@ fn main() {
         }
     }
 
+    // Add loader-relative rpath so bundled libs next to the binary are found.
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/lib/codon");
+    } else {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/codon");
+    }
+
     // Link against Codon runtime + compiler; expect the caller's search path to be set.
     println!("cargo:rustc-link-lib=dylib=codonrt");
     println!("cargo:rustc-link-lib=dylib=codonc");
