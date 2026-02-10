@@ -51,6 +51,14 @@ for gmp_link in "$CODON_PATH/lib/codon/libgmp.dylib" "$CODON_PATH/lib/codon/libg
     rm -f "$gmp_link"
   fi
 done
+# Fix sequre stdlib symlink to use absolute path (relative symlink breaks on CI)
+SEQURE_STDLIB_LINK="$CODON_PATH/lib/codon/plugins/sequre/stdlib"
+if [ -L "$SEQURE_STDLIB_LINK" ] && [ ! -e "$SEQURE_STDLIB_LINK" ]; then
+  rm -f "$SEQURE_STDLIB_LINK"
+  if [ -d "$ROOT_DIR/sequre/stdlib" ]; then
+    ln -s "$ROOT_DIR/sequre/stdlib" "$SEQURE_STDLIB_LINK"
+  fi
+fi
 cp -RL "$CODON_PATH/lib/codon" "$DIST_DIR/lib/"
 
 if [ -d "$CODON_PATH/include" ]; then
