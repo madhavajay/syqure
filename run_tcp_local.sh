@@ -5,6 +5,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXAMPLE="${1:-example/two_party_sum_tcp.codon}"
 
 echo "Running TCP demo: ${EXAMPLE}"
+
+EXISTING=$(ps aux | grep 'target/debug/syqure' | grep -v grep || true)
+if [ -n "$EXISTING" ]; then
+  echo ""
+  echo "WARNING: Existing syqure processes detected:"
+  echo "$EXISTING" | awk '{printf "  PID %-8s CPU %-6s MEM %-6s %s %s\n", $2, $3, $4, $11, $12}'
+  echo ""
+  read -r -p "Kill them and continue? [y/N] " response
+  case "$response" in
+    [yY]|[yY][eE][sS])
+      echo "$EXISTING" | awk '{print $2}' | xargs kill 2>/dev/null || true
+      sleep 1
+      STILL_ALIVE=$(ps aux | grep 'target/debug/syqure' | grep -v grep || true)
+      if [ -n "$STILL_ALIVE" ]; then
+        echo "Processes didn't exit, sending SIGKILL..."
+        echo "$STILL_ALIVE" | awk '{print $2}' | xargs kill -9 2>/dev/null || true
+        sleep 0.5
+      fi
+      echo "Cleared."
+      ;;
+    *)
+      echo "Aborted."
+      exit 1
+      ;;
+  esac
+fi
+
 echo "Starting 3 parties on localhost (base port 9000)..."
 
 export SEQURE_CP_IPS="127.0.0.1,127.0.0.1,127.0.0.1"

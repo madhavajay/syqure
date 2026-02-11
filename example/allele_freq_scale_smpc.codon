@@ -1,0 +1,143 @@
+import os
+import time
+
+from numpy.create import array, zeros
+
+from sequre import sequre, mpc, Sharetensor as ST
+
+
+def load_json(path: str) -> List[int]:
+    content = open(path).read().strip()
+    if not content or content == "[]":
+        return []
+    inner = content.strip("[]").strip()
+    if not inner:
+        return []
+    result: List[int] = []
+    for x in inner.split(","):
+        x = x.strip()
+        if x:
+            result.append(int(x))
+    return result
+
+
+@sequre
+def secure_add(mpc, a, b):
+    return a + b
+
+
+@sequre
+def secure_div(mpc, a, b):
+    return a / b
+
+
+def main():
+    t_start = time.time()
+    m = mpc()
+    t_setup = time.time()
+
+    pid = m.pid
+    data_dir = os.getenv("BENCHMARK_DATA_DIR", default="benchmark_data")
+    n_str = os.getenv("BENCHMARK_N", default="1")
+    n = int(n_str)
+
+    ac_path = f"{data_dir}/n{n}_p{pid}_ac.json"
+    an_path = f"{data_dir}/n{n}_p{pid}_an.json"
+
+    if pid > 0:
+        ac_raw = load_json(ac_path)
+        an_raw = load_json(an_path)
+    else:
+        ac_raw: List[int] = []
+        an_raw: List[int] = []
+
+    print(f"CP{pid}: n={n}")
+
+    mhe_setup_bytes = m.stats.bytes_sent
+    mhe_setup_sends = m.stats.send_requests
+    mhe_setup_receives = m.stats.receive_requests
+    m.stats.reset_stats()
+
+    if len(ac_raw) > 0:
+        ac_vec = array(ac_raw, dtype=int)
+        an_vec = array(an_raw, dtype=int)
+    else:
+        ac_vec = zeros((n,), dtype=int)
+        an_vec = zeros((n,), dtype=int)
+    zero_vec = zeros((n,), dtype=int)
+
+    t_compute_start = time.time()
+
+    ac_1 = ST.enc(m, ac_vec if pid == 1 else zero_vec, 1, m.default_mpc_modulus)
+    ac_2 = ST.enc(m, ac_vec if pid == 2 else zero_vec, 2, m.default_mpc_modulus)
+    an_1 = ST.enc(m, an_vec if pid == 1 else zero_vec, 1, m.default_mpc_modulus)
+    an_2 = ST.enc(m, an_vec if pid == 2 else zero_vec, 2, m.default_mpc_modulus)
+
+    numerator = secure_add(m, ac_1, ac_2)
+    denominator = secure_add(m, an_1, an_2)
+    result = secure_div(m, numerator, denominator)
+
+    t_compute_done = time.time()
+    t_end = time.time()
+
+    if pid in (1, 2):
+        revealed = result.reveal(m).tolist()
+        af_results: List[float] = []
+        for x in revealed:
+            af_results.append(float(x))
+
+        sc_revealed = numerator.reveal(m).tolist()
+        sn_revealed = denominator.reveal(m).tolist()
+        sc_results: List[int] = []
+        sn_results: List[int] = []
+        for x in sc_revealed:
+            sc_results.append(int(x))
+        for x in sn_revealed:
+            sn_results.append(int(x))
+
+        if n <= 10:
+            for i in range(n):
+                print(f"CP{pid}: row {i}: SC={sc_results[i]}, SN={sn_results[i]}, AF={af_results[i]:.6f}")
+        else:
+            print(f"CP{pid}: first 3: AF={af_results[0]:.6f}, {af_results[1]:.6f}, {af_results[2]:.6f}")
+            print(f"CP{pid}: last: AF={af_results[n-1]:.6f}")
+
+        setup_s = t_setup - t_start
+        compute_s = t_compute_done - t_compute_start
+        total_s = t_end - t_start
+
+        comp_bytes = m.stats.bytes_sent
+        comp_sends = m.stats.send_requests
+        comp_recvs = m.stats.receive_requests
+        total_bytes = mhe_setup_bytes + comp_bytes
+        total_sends = mhe_setup_sends + comp_sends
+        total_recvs = mhe_setup_receives + comp_recvs
+        comp_mb = comp_bytes / (1024.0 * 1024.0)
+        total_mb = total_bytes / (1024.0 * 1024.0)
+
+        print(f"\n=== BENCHMARK CP{pid} (SMPC+SecureDiv, N={n}) ===")
+        print(f"METRIC mode SMPC")
+        print(f"METRIC num_rows {n}")
+        print(f"METRIC setup_time_s {setup_s:.4f}")
+        print(f"METRIC compute_time_s {compute_s:.4f}")
+        print(f"METRIC total_time_s {total_s:.4f}")
+        print(f"METRIC mhe_setup_bytes {mhe_setup_bytes}")
+        print(f"METRIC mhe_setup_sends {mhe_setup_sends}")
+        print(f"METRIC mhe_setup_receives {mhe_setup_receives}")
+        print(f"METRIC compute_bytes {comp_bytes}")
+        print(f"METRIC compute_sends {comp_sends}")
+        print(f"METRIC compute_receives {comp_recvs}")
+        print(f"METRIC total_bytes {total_bytes}")
+        print(f"METRIC total_sends {total_sends}")
+        print(f"METRIC total_receives {total_recvs}")
+        print(f"METRIC compute_mb {comp_mb:.6f}")
+        print(f"METRIC total_mb {total_mb:.6f}")
+        if compute_s > 0.0:
+            print(f"METRIC throughput_mb_per_s {comp_mb / compute_s:.4f}")
+            print(f"METRIC throughput_msgs_per_s {float(comp_sends) / compute_s:.2f}")
+        print(f"=== END BENCHMARK CP{pid} ===")
+
+    m.done()
+
+
+main()
