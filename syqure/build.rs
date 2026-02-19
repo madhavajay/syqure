@@ -74,11 +74,15 @@ fn main() {
     bridge.include("src");
     bridge.include("src/ffi");
 
+    let emit_absolute_build_rpath = should_emit_absolute_build_rpath();
+
     // Emit any custom linker search paths (e.g., Codon/Sequre libs).
     if let Ok(lib_dirs) = env::var("SYQURE_CPP_LIB_DIRS") {
         for dir in lib_dirs.split(':').filter(|s| !s.is_empty()) {
             println!("cargo:rustc-link-search=native={}", dir);
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir);
+            if emit_absolute_build_rpath {
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir);
+            }
         }
     } else {
         let mut linked = false;
@@ -87,7 +91,9 @@ fn main() {
             if bundle_lib.exists() {
                 let path = bundle_lib.display();
                 println!("cargo:rustc-link-search=native={}", path);
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                if emit_absolute_build_rpath {
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                }
                 linked = true;
             }
             // Only link against bundled LLVM when explicitly requested.
@@ -99,7 +105,9 @@ fn main() {
             {
                 let path = bundle_llvm.display();
                 println!("cargo:rustc-link-search=native={}", path);
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                if emit_absolute_build_rpath {
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                }
                 if let Some(llvm_lib) = find_llvm_lib(&bundle_llvm) {
                     println!("cargo:rustc-link-lib=dylib={}", llvm_lib);
                 }
@@ -111,17 +119,21 @@ fn main() {
                 if default_lib.exists() {
                     let path = default_lib.display();
                     println!("cargo:rustc-link-search=native={}", path);
-                    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                    if emit_absolute_build_rpath {
+                        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", path);
+                    }
                 }
             }
         }
     }
 
-    // Add loader-relative rpath so bundled libs next to the binary are found.
+    // Add loader-relative rpaths so bundled libs are found after relocating syqure.
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/lib/codon");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path/../lib/codon");
     } else {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/codon");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/codon");
     }
 
     // Link against Codon runtime + compiler; expect the caller's search path to be set.
@@ -164,6 +176,11 @@ fn main() {
             "-Wl,-rpath,@loader_path/lib/codon"
         } else {
             "-Wl,-rpath,$ORIGIN/lib/codon"
+        })
+        .flag_if_supported(if cfg!(target_os = "macos") {
+            "-Wl,-rpath,@loader_path/../lib/codon"
+        } else {
+            "-Wl,-rpath,$ORIGIN/../lib/codon"
         });
 
     // For self-contained binaries: add rpath to the expected cache extraction path.
@@ -188,6 +205,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SYQURE_CPP_INCLUDE");
     println!("cargo:rerun-if-env-changed=SYQURE_CPP_LIB_DIRS");
     println!("cargo:rerun-if-env-changed=SYQURE_BUNDLE_FILE");
+    println!("cargo:rerun-if-env-changed=SYQURE_EMIT_ABSOLUTE_RPATH");
     println!("cargo:rerun-if-env-changed=SYQURE_LINK_LLVM_SHARED");
     println!("cargo:rerun-if-env-changed=SYQURE_LINK_LLVM_STATIC");
     println!("cargo:rerun-if-env-changed=SYQURE_LLVM_INCLUDE");
@@ -199,6 +217,17 @@ fn repo_root() -> Option<std::path::PathBuf> {
     std::path::Path::new(&manifest)
         .parent()
         .map(|p| p.to_path_buf())
+}
+
+fn should_emit_absolute_build_rpath() -> bool {
+    if let Ok(raw) = env::var("SYQURE_EMIT_ABSOLUTE_RPATH") {
+        let v = raw.trim().to_ascii_lowercase();
+        return matches!(v.as_str(), "1" | "true" | "yes" | "on");
+    }
+
+    // Keep previous local-dev behavior for debug/profile builds, but default
+    // release/profile builds to portable relative runtime paths only.
+    env::var("PROFILE").map(|p| p != "release").unwrap_or(false)
 }
 
 fn discover_external_llvm_include(bundle_root: &Option<PathBuf>) -> Option<PathBuf> {
