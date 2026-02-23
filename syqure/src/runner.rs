@@ -182,7 +182,8 @@ fn resolve_codon_root(preferred: &Path) -> Result<PathBuf> {
 }
 
 fn normalize_codon_root(path: &Path) -> PathBuf {
-    if path.join("stdlib").exists() {
+    if path.join("stdlib").exists() || path.join("plugins").exists() || path.ends_with("lib/codon")
+    {
         path.to_path_buf()
     } else {
         path.join("lib/codon")
@@ -212,7 +213,7 @@ fn default_codon_path() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let bundled = dir.join("lib/codon");
-            if bundled.exists() {
+            if bundled.join("stdlib").exists() && bundled.join("plugins").exists() {
                 return bundled;
             }
         }
