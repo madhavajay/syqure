@@ -75,6 +75,8 @@ fn main() {
     bridge.include("src/ffi");
 
     let emit_absolute_build_rpath = should_emit_absolute_build_rpath();
+    let runtime_lib_dirs = runtime_lib_dirs(&bundle_root);
+    stage_runtime_libs(&runtime_lib_dirs);
 
     // Emit any custom linker search paths (e.g., Codon/Sequre libs).
     if let Ok(lib_dirs) = env::var("SYQURE_CPP_LIB_DIRS") {
@@ -87,8 +89,7 @@ fn main() {
     } else {
         let mut linked = false;
         if let Some(root) = &bundle_root {
-            let bundle_lib = root.join("lib/codon");
-            if bundle_lib.exists() {
+            if let Some(bundle_lib) = runtime_lib_dirs.first() {
                 let path = bundle_lib.display();
                 println!("cargo:rustc-link-search=native={}", path);
                 if emit_absolute_build_rpath {
@@ -225,9 +226,129 @@ fn should_emit_absolute_build_rpath() -> bool {
         return matches!(v.as_str(), "1" | "true" | "yes" | "on");
     }
 
-    // Keep previous local-dev behavior for debug/profile builds, but default
-    // release/profile builds to portable relative runtime paths only.
-    env::var("PROFILE").map(|p| p != "release").unwrap_or(false)
+    false
+}
+
+fn runtime_lib_dirs(bundle_root: &Option<PathBuf>) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(lib_dirs) = env::var("SYQURE_CPP_LIB_DIRS") {
+        for dir in lib_dirs.split(':').filter(|s| !s.is_empty()) {
+            dirs.push(PathBuf::from(dir));
+        }
+    }
+    if let Some(root) = bundle_root {
+        let bundle_lib = root.join("lib/codon");
+        if bundle_lib.exists() {
+            dirs.push(bundle_lib);
+        }
+    }
+    if let Some(repo_root) = repo_root() {
+        let default_lib = repo_root.join("codon/install/lib/codon");
+        if default_lib.exists() {
+            dirs.push(default_lib);
+        }
+    }
+    dirs
+}
+
+fn target_profile_dir() -> Option<PathBuf> {
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR")?);
+    out_dir.ancestors().nth(3).map(|p| p.to_path_buf())
+}
+
+fn stage_runtime_libs(runtime_lib_dirs: &[PathBuf]) {
+    let Some(target_dir) = target_profile_dir() else {
+        return;
+    };
+    let lib_target = target_dir.join("lib/codon");
+    if let Err(err) = std::fs::create_dir_all(&lib_target) {
+        println!(
+            "cargo:warning=failed to create runtime lib staging dir {}: {}",
+            lib_target.display(),
+            err
+        );
+        return;
+    }
+
+    for dir in runtime_lib_dirs {
+        copy_matching_runtime_libs(dir, &lib_target);
+    }
+    copy_homebrew_lib("zstd", "libzstd.1.dylib", &lib_target);
+    copy_homebrew_lib("gmp", "libgmp.dylib", &lib_target);
+
+    if cfg!(target_os = "macos") {
+        rewrite_staged_runtime_install_names(&lib_target);
+    }
+}
+
+fn copy_matching_runtime_libs(src_dir: &Path, dst_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(src_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let is_runtime_lib = (name.starts_with("libcodon")
+            || name.starts_with("libomp")
+            || name.starts_with("libgmp")
+            || name.starts_with("libzstd"))
+            && (name.ends_with(".dylib") || name.contains(".so"));
+        if is_runtime_lib {
+            let _ = std::fs::copy(&path, dst_dir.join(name));
+        }
+    }
+}
+
+fn copy_homebrew_lib(formula: &str, lib_name: &str, dst_dir: &Path) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let Ok(output) = Command::new("brew").args(["--prefix", formula]).output() else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let prefix = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if prefix.is_empty() {
+        return;
+    }
+    let src = PathBuf::from(prefix).join("lib").join(lib_name);
+    if src.exists() {
+        let _ = std::fs::copy(&src, dst_dir.join(lib_name));
+    }
+}
+
+fn rewrite_staged_runtime_install_names(lib_dir: &Path) {
+    let replacements = [
+        (
+            "/opt/homebrew/opt/zstd/lib/libzstd.1.dylib",
+            "@loader_path/libzstd.1.dylib",
+        ),
+        (
+            "/usr/local/opt/zstd/lib/libzstd.1.dylib",
+            "@loader_path/libzstd.1.dylib",
+        ),
+    ];
+    for lib_name in ["libcodonrt.dylib", "libcodonc.dylib"] {
+        let path = lib_dir.join(lib_name);
+        if !path.exists() {
+            continue;
+        }
+        for (old, newv) in &replacements {
+            let _ = Command::new("install_name_tool")
+                .arg("-change")
+                .arg(old)
+                .arg(newv)
+                .arg(&path)
+                .status();
+        }
+    }
 }
 
 fn discover_external_llvm_include(bundle_root: &Option<PathBuf>) -> Option<PathBuf> {
