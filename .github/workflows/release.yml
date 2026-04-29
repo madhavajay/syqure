@@ -471,6 +471,10 @@ jobs:
               cp -L "$GMP_LIB" "$RELEASE_DIR/lib/codon/libgmp.dylib"
               cp -L "$GMP_LIB" "$RELEASE_DIR/lib/codon/libgmp.so"
             fi
+            ZSTD_LIB="$(brew --prefix zstd)/lib/libzstd.1.dylib"
+            if [[ -f "$ZSTD_LIB" ]]; then
+              cp -L "$ZSTD_LIB" "$RELEASE_DIR/lib/codon/libzstd.1.dylib"
+            fi
           else
             GMP_LIB="$(find /usr/lib -name 'libgmp.so*' 2>/dev/null | head -n 1)"
             if [[ -n "$GMP_LIB" ]]; then
@@ -491,6 +495,12 @@ jobs:
               install_name_tool -delete_rpath "$rpath" "$RELEASE_DIR/${{ matrix.binary }}" 2>/dev/null || true
             done
             install_name_tool -add_rpath "@loader_path/lib/codon" "$RELEASE_DIR/${{ matrix.binary }}"
+            for dylib in "$RELEASE_DIR/lib/codon/libcodonrt.dylib" "$RELEASE_DIR/lib/codon/libcodonc.dylib"; do
+              if [[ -f "$dylib" ]]; then
+                install_name_tool -change "/opt/homebrew/opt/zstd/lib/libzstd.1.dylib" "@loader_path/libzstd.1.dylib" "$dylib" 2>/dev/null || true
+                install_name_tool -change "/usr/local/opt/zstd/lib/libzstd.1.dylib" "@loader_path/libzstd.1.dylib" "$dylib" 2>/dev/null || true
+              fi
+            done
           else
             # Linux: use patchelf
             sudo apt-get install -y patchelf 2>/dev/null || true
