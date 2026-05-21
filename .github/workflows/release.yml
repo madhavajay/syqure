@@ -91,6 +91,7 @@ jobs:
 
       - name: Install build deps (llvm, gcc, libomp, openssl)
         run: |
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
           brew update
           brew install llvm@17 gcc libomp openssl@3
 
@@ -279,8 +280,19 @@ jobs:
       - name: Install build deps (macOS)
         if: matrix.os == 'macos-latest' && inputs.build_macos && inputs.use_precompiled_bins
         run: |
+          set -euo pipefail
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
           brew update
           brew install zstd llvm@17 gmp
+          LLVM17_PREFIX="$(brew --prefix llvm@17)"
+          REQUIRED_LLVM_HEADER="llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
+          if [[ ! -f "$LLVM17_PREFIX/include/$REQUIRED_LLVM_HEADER" ]]; then
+            echo "Missing required LLVM 17 header at $LLVM17_PREFIX/include/$REQUIRED_LLVM_HEADER" >&2
+            exit 1
+          fi
+          echo "LLVM_PREFIX=$LLVM17_PREFIX" >> "$GITHUB_ENV"
+          echo "SYQURE_LLVM_INCLUDE=$LLVM17_PREFIX/include" >> "$GITHUB_ENV"
+          echo "$LLVM17_PREFIX/bin" >> "$GITHUB_PATH"
 
       - name: Download macOS arm64 bundle
         if: matrix.os == 'macos-latest' && inputs.build_macos && !inputs.use_precompiled_bins

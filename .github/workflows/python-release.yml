@@ -147,6 +147,7 @@ jobs:
       - name: Install build deps (macOS)
         if: matrix.os == 'macos-latest'
         run: |
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
           brew update
           brew install llvm@17 gmp fmt zstd
 
