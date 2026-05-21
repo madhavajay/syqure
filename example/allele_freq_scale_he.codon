@@ -1,0 +1,212 @@
+import math
+import os
+import time
+
+from numpy.create import array
+
+import sequre.lattiseq.ckks as ckks
+
+from sequre import mpc
+from sequre.types.ciphertensor import Ciphertensor
+
+
+CHEBYSHEV_DEGREE = 8
+
+
+def load_json(path: str) -> List[int]:
+    content = open(path).read().strip()
+    if not content or content == "[]":
+        return []
+    inner = content.strip("[]").strip()
+    if not inner:
+        return []
+    result: List[int] = []
+    for x in inner.split(","):
+        x = x.strip()
+        if x:
+            result.append(int(x))
+    return result
+
+
+def to_floats(data: List[int]) -> List[float]:
+    result: List[float] = []
+    for x in data:
+        result.append(float(x))
+    return result
+
+
+def chebyshev_nodes_plain(n: int, a: float, b: float) -> List[float]:
+    cx = 0.5 * (a + b)
+    cy = 0.5 * (b - a)
+    nodes: List[float] = []
+    for k in range(1, n + 1):
+        nodes.append(cx + cy * math.cos((float(k) - 0.5) * (math.pi / float(n))))
+    return nodes
+
+
+def chebyshev_coeffs_inv(nodes: List[float], a: float, b: float) -> List[float]:
+    n = len(nodes)
+    coeffs = [0.0 for _ in range(n)]
+    y: List[float] = []
+    for node in nodes:
+        y.append(1.0 / node)
+
+    for i in range(n):
+        u = (2.0 * nodes[i] - a - b) / (b - a)
+        t_prev = 1.0
+        t = u
+        for j in range(n):
+            coeffs[j] += y[i] * t_prev
+            t_next = 2.0 * u * t - t_prev
+            t_prev = t
+            t = t_next
+
+    coeffs[0] /= float(n)
+    for i in range(1, n):
+        coeffs[i] *= (2.0 / float(n))
+    return coeffs
+
+
+def chebyshev_evaluate_ct(m, x, coeffs: List[float], a: float, b: float):
+    n = len(coeffs)
+    scale = 2.0 / (b - a)
+    offset = (a + b) / (b - a)
+    scaled_x = x.mul(m, scale).sub(m, offset)
+
+    w_2 = scaled_x.mul(m, coeffs[n - 1] * 2.0).add(m, coeffs[n - 2])
+    w_1 = scaled_x.mul(m, w_2).mul(m, 2.0).sub(m, coeffs[n - 1] - coeffs[n - 3])
+    w_0 = scaled_x.mul(m, w_1).mul(m, 2.0).sub(m, w_2).add(m, coeffs[n - 4])
+
+    for i in range(n - 5, -1, -1):
+        w_2 = w_1
+        w_1 = w_0
+        w_0 = scaled_x.mul(m, w_1).mul(m, 2.0).sub(m, w_2).add(m, coeffs[i])
+
+    return w_0.sub(m, scaled_x.mul(m, w_1))
+
+
+def main():
+    t_start = time.time()
+    m = mpc()
+    t_setup = time.time()
+
+    pid = m.pid
+    data_dir = os.getenv("BENCHMARK_DATA_DIR", default="benchmark_data")
+    n_str = os.getenv("BENCHMARK_N", default="1")
+    n = int(n_str)
+
+    ac_path = f"{data_dir}/n{n}_p{pid}_ac.json"
+    an_path = f"{data_dir}/n{n}_p{pid}_an.json"
+
+    if pid > 0:
+        ac_raw = load_json(ac_path)
+        an_raw = load_json(an_path)
+    else:
+        ac_raw: List[int] = []
+        an_raw: List[int] = []
+
+    ac_f = to_floats(ac_raw) if len(ac_raw) > 0 else [0.0 for _ in range(n)]
+    an_f = to_floats(an_raw) if len(an_raw) > 0 else [0.0 for _ in range(n)]
+
+    print(f"CP{pid}: n={n}, ac_len={len(ac_f)}, an_len={len(an_f)}")
+
+    mhe_setup_bytes = m.stats.bytes_sent
+    mhe_setup_sends = m.stats.send_requests
+    mhe_setup_receives = m.stats.receive_requests
+    m.stats.reset_stats()
+
+    a_interval = 150.0
+    b_interval = 1050.0
+    nodes = chebyshev_nodes_plain(CHEBYSHEV_DEGREE + 1, a_interval, b_interval)
+    coeffs = chebyshev_coeffs_inv(nodes, a_interval, b_interval)
+
+    if pid > 0:
+        t_enc_start = time.time()
+        ac_ct = Ciphertensor[ckks.Ciphertext].enc(m, array(ac_f))
+        an_ct = Ciphertensor[ckks.Ciphertext].enc(m, array(an_f))
+        t_enc_done = time.time()
+
+        t_comm_start = time.time()
+        if pid == 1:
+            other_ac = m.comms.receive_as_jar(2, Ciphertensor[ckks.Ciphertext])
+            other_an = m.comms.receive_as_jar(2, Ciphertensor[ckks.Ciphertext])
+            total_ac_ct = ac_ct.add(m, other_ac)
+            total_an_ct = an_ct.add(m, other_an)
+            m.comms.send_as_jar(total_ac_ct, 2)
+            m.comms.send_as_jar(total_an_ct, 2)
+        else:
+            m.comms.send_as_jar(ac_ct, 1)
+            m.comms.send_as_jar(an_ct, 1)
+            total_ac_ct = m.comms.receive_as_jar(1, Ciphertensor[ckks.Ciphertext])
+            total_an_ct = m.comms.receive_as_jar(1, Ciphertensor[ckks.Ciphertext])
+        t_comm_done = time.time()
+
+        t_div_start = time.time()
+        inv_den = chebyshev_evaluate_ct(m, total_an_ct, coeffs, a_interval, b_interval)
+        result_ct = total_ac_ct.mul(m, inv_den)
+        t_div_done = time.time()
+
+        t_reveal_start = time.time()
+        af_list_raw = result_ct.reveal(m, T=float).flatten().tolist()
+        t_reveal_done = time.time()
+
+        af_list: List[float] = []
+        for x in af_list_raw:
+            af_list.append(float(x))
+
+        t_end = time.time()
+
+        if n <= 10:
+            for i in range(n):
+                print(f"CP{pid}: row {i}: AF={af_list[i]:.6f}")
+        else:
+            print(f"CP{pid}: first 3 AF values: {af_list[0]:.6f}, {af_list[1]:.6f}, {af_list[2]:.6f}")
+            print(f"CP{pid}: last AF value: {af_list[n-1]:.6f}")
+
+        setup_s = t_setup - t_start
+        enc_s = t_enc_done - t_enc_start
+        comm_s = t_comm_done - t_comm_start
+        div_s = t_div_done - t_div_start
+        reveal_s = t_reveal_done - t_reveal_start
+        total_s = t_end - t_start
+        compute_s = enc_s + comm_s + div_s + reveal_s
+
+        comp_bytes = m.stats.bytes_sent
+        comp_sends = m.stats.send_requests
+        comp_recvs = m.stats.receive_requests
+        total_bytes = mhe_setup_bytes + comp_bytes
+        total_sends = mhe_setup_sends + comp_sends
+        total_recvs = mhe_setup_receives + comp_recvs
+        comp_mb = comp_bytes / (1024.0 * 1024.0)
+        total_mb = total_bytes / (1024.0 * 1024.0)
+
+        print(f"\n=== BENCHMARK CP{pid} (HE+Chebyshev, N={n}) ===")
+        print(f"METRIC mode HE")
+        print(f"METRIC num_rows {n}")
+        print(f"METRIC setup_time_s {setup_s:.4f}")
+        print(f"METRIC encryption_time_s {enc_s:.4f}")
+        print(f"METRIC communication_time_s {comm_s:.4f}")
+        print(f"METRIC division_time_s {div_s:.4f}")
+        print(f"METRIC reveal_time_s {reveal_s:.4f}")
+        print(f"METRIC compute_time_s {compute_s:.4f}")
+        print(f"METRIC total_time_s {total_s:.4f}")
+        print(f"METRIC mhe_setup_bytes {mhe_setup_bytes}")
+        print(f"METRIC mhe_setup_sends {mhe_setup_sends}")
+        print(f"METRIC mhe_setup_receives {mhe_setup_receives}")
+        print(f"METRIC compute_bytes {comp_bytes}")
+        print(f"METRIC compute_sends {comp_sends}")
+        print(f"METRIC compute_receives {comp_recvs}")
+        print(f"METRIC total_bytes {total_bytes}")
+        print(f"METRIC total_sends {total_sends}")
+        print(f"METRIC total_receives {total_recvs}")
+        print(f"METRIC compute_mb {comp_mb:.6f}")
+        print(f"METRIC total_mb {total_mb:.6f}")
+        if comm_s > 0.0:
+            print(f"METRIC throughput_mb_per_s {comp_mb / comm_s:.4f}")
+            print(f"METRIC throughput_msgs_per_s {float(comp_sends) / comm_s:.2f}")
+        print(f"=== END BENCHMARK CP{pid} ===")
+
+    m.done()
+
+
+main()
