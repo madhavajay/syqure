@@ -707,6 +707,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1
           brew update
           brew install cmake ninja zstd jq fmt libxml2 libedit openssl@3 libsodium gmp pkg-config
 
